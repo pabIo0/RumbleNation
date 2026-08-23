@@ -88,3 +88,15 @@ class LogicaJogo:
             self.id_jogador_atual = 1
 
         return True, "Jogada realizada com sucesso."
+
+    def verificar_fim_de_jogo(self, id_jogador):
+        """Verifica quem zerou o estoque primeiro para a regra do desempate."""
+        jogador = self.jogadores[id_jogador]
+        if jogador.tropas == 0 and id_jogador not in self.ordem_termino:
+            self.ordem_termino.append(id_jogador)
+            
+            # O primeiro a acabar ganha 3 espadas (peso maior). O segundo ganha 2 espadas.
+            if len(self.ordem_termino) == 1:
+                jogador.medalhas = 3 
+            elif len(self.ordem_termino) == 2:
+                jogador.medalhas = 2
