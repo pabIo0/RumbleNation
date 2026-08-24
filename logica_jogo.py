@@ -100,3 +100,53 @@ class LogicaJogo:
                 jogador.medalhas = 3 
             elif len(self.ordem_termino) == 2:
                 jogador.medalhas = 2
+
+    def resolver_guerras(self):
+        """
+        Resolve as batalhas do castelo 2 ao 12 em ordem, calcula os pontos finais 
+        e aplica o sistema de reforço em cascata aos castelos vizinhos maiores.
+        """
+        # Dicionario para rastrear a pontuação final da partida
+        pontuacao_final = {1: 0, 2: 0}
+
+        # O loop garante que a resolução aconteça do 2 ao 12
+        for id_castelo in range(2, 13):
+            castelo = self.castelos[id_castelo]
+            
+            tropas_j1 = castelo.tropas[1]
+            tropas_j2 = castelo.tropas[2]
+            
+            # Se não tem tropas no castelo, passa para o próximo
+            if tropas_j1 == 0 and tropas_j2 == 0:
+                castelo.conquistado = True
+                continue
+                
+            vencedor_id = None
+            
+            # 1. Checagem de quem tem mais tropas
+            if tropas_j1 > tropas_j2:
+                vencedor_id = 1
+            elif tropas_j2 > tropas_j1:
+                vencedor_id = 2
+            else:
+                # 2. Desempate usando as medalhas
+                medalhas_j1 = self.jogadores[1].medalhas
+                medalhas_j2 = self.jogadores[2].medalhas
+                
+                if medalhas_j1 > medalhas_j2:
+                    vencedor_id = 1
+                else:
+                    vencedor_id = 2
+                    
+            # 3. Entrega de pontos ao vencedor
+            pontuacao_final[vencedor_id] = pontuacao_final[vencedor_id] + castelo.pontos_vitoria
+            castelo.conquistado = True
+            
+            # 4. Reforços para o vencedor
+            for id_vizinho in castelo.vizinhos:
+                # O reforço só é enviado para os vizinhos que ainda serão resolvidos
+                if id_vizinho > id_castelo:
+                    quantidade_tropas_bonus = 1
+                    self.castelos[id_vizinho].adicionar_tropas(vencedor_id, quantidade_tropas_bonus)
+                    
+        return pontuacao_final
