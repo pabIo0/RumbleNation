@@ -34,18 +34,25 @@ POSICOES_CASTELOS = {
 
 def iniciar_jogo():
     relogio = pygame.time.Clock()
-    jogo = LogicaJogo() 
+    jogo = None 
     executando = True
+    
+    estado_jogo = "MENU"
+    pontuacao_final = {}
     
     dados_na_tela = []
     indices_selecionados = []
-    estado_jogo = "RODANDO"
-    pontuacao_final = {}
     
     fonte_botao = pygame.font.SysFont('Arial', 24, bold=True)
     fonte_dado = pygame.font.SysFont('Arial', 40, bold=True)
+    fonte_titulo = pygame.font.SysFont('Arial', 50, bold=True)
+    
+    rect_botao_18 = pygame.Rect(300, 300, 400, 60)
+    rect_botao_36 = pygame.Rect(300, 400, 400, 60)
     
     rect_botao_rolar = pygame.Rect(400, 610, 200, 50)
+    rect_botao_reiniciar = pygame.Rect(350, 640, 300, 50)
+    
     rects_dados = [
         pygame.Rect(350, 520, 60, 60),
         pygame.Rect(470, 520, 60, 60),
@@ -61,7 +68,15 @@ def iniciar_jogo():
                 if evento.button == 1:
                     pos_mouse = evento.pos
                     
-                    if estado_jogo == "RODANDO":
+                    if estado_jogo == "MENU":
+                        if rect_botao_18.collidepoint(pos_mouse):
+                            jogo = LogicaJogo(18)
+                            estado_jogo = "RODANDO"
+                        elif rect_botao_36.collidepoint(pos_mouse):
+                            jogo = LogicaJogo(36)
+                            estado_jogo = "RODANDO"
+                            
+                    elif estado_jogo == "RODANDO":
                         if rect_botao_rolar.collidepoint(pos_mouse):
                             if len(dados_na_tela) == 0:
                                 dados_na_tela = jogo.rolar_dados()
@@ -94,50 +109,72 @@ def iniciar_jogo():
                                                 if jogo.jogadores[1].tropas == 0 and jogo.jogadores[2].tropas == 0:
                                                     estado_jogo = "FIM"
                                                     pontuacao_final = jogo.resolver_guerras()
+                                                    
+                    elif estado_jogo == "FIM":
+                        if rect_botao_reiniciar.collidepoint(pos_mouse):
+                            estado_jogo = "MENU"
+                            jogo = None
+                            dados_na_tela = []
+                            indices_selecionados = []
+                            pontuacao_final = {}
 
         tela.fill(COR_FUNDO)
         
-        for id_castelo, castelo in jogo.castelos.items():
-            posicao_atual = POSICOES_CASTELOS[id_castelo]
+        if estado_jogo == "MENU":
+            texto_titulo = fonte_titulo.render("RUMBLE NATION", True, COR_PRETA)
+            tela.blit(texto_titulo, texto_titulo.get_rect(center=(LARGURA_TELA // 2, 150)))
             
-            for id_vizinho in castelo.vizinhos:
-                posicao_vizinho = POSICOES_CASTELOS[id_vizinho]
-                pygame.draw.line(tela, (150, 150, 150), posicao_atual, posicao_vizinho, 4)
+            pygame.draw.rect(tela, (200, 200, 200), rect_botao_18)
+            pygame.draw.rect(tela, COR_PRETA, rect_botao_18, 2)
+            texto_18 = fonte_botao.render("Partida Rápida (18 Tropas)", True, COR_PRETA)
+            tela.blit(texto_18, texto_18.get_rect(center=rect_botao_18.center))
+            
+            pygame.draw.rect(tela, (200, 200, 200), rect_botao_36)
+            pygame.draw.rect(tela, COR_PRETA, rect_botao_36, 2)
+            texto_36 = fonte_botao.render("Partida Completa (36 Tropas)", True, COR_PRETA)
+            tela.blit(texto_36, texto_36.get_rect(center=rect_botao_36.center))
+            
+        elif estado_jogo == "RODANDO":
+            for id_castelo, castelo in jogo.castelos.items():
+                posicao_atual = POSICOES_CASTELOS[id_castelo]
+                
+                for id_vizinho in castelo.vizinhos:
+                    posicao_vizinho = POSICOES_CASTELOS[id_vizinho]
+                    pygame.draw.line(tela, (150, 150, 150), posicao_atual, posicao_vizinho, 4)
 
-        for id_castelo, castelo in jogo.castelos.items():
-            posicao_atual = POSICOES_CASTELOS[id_castelo]
-            
-            pygame.draw.circle(tela, COR_PRETA, posicao_atual, 35)
-            pygame.draw.circle(tela, (255, 255, 255), posicao_atual, 32)
-            
-            texto = FONTE_CASTELO.render(str(id_castelo), True, COR_PRETA)
-            retangulo_texto = texto.get_rect(center=posicao_atual)
-            tela.blit(texto, retangulo_texto)
-            
-            tropas_j1 = castelo.tropas[1]
-            tropas_j2 = castelo.tropas[2]
-            
-            if tropas_j1 > 0:
-                pos_x_j1 = posicao_atual[0] - 25
-                pos_y_j1 = posicao_atual[1] - 25
-                pygame.draw.circle(tela, COR_JOGADOR_1, (pos_x_j1, pos_y_j1), 15)
-                pygame.draw.circle(tela, COR_PRETA, (pos_x_j1, pos_y_j1), 15, 2)
+            for id_castelo, castelo in jogo.castelos.items():
+                posicao_atual = POSICOES_CASTELOS[id_castelo]
                 
-                texto_t1 = FONTE_TROPAS.render(str(tropas_j1), True, (255, 255, 255))
-                retangulo_t1 = texto_t1.get_rect(center=(pos_x_j1, pos_y_j1))
-                tela.blit(texto_t1, retangulo_t1)
+                pygame.draw.circle(tela, COR_PRETA, posicao_atual, 35)
+                pygame.draw.circle(tela, (255, 255, 255), posicao_atual, 32)
                 
-            if tropas_j2 > 0:
-                pos_x_j2 = posicao_atual[0] + 25
-                pos_y_j2 = posicao_atual[1] - 25
-                pygame.draw.circle(tela, COR_JOGADOR_2, (pos_x_j2, pos_y_j2), 15)
-                pygame.draw.circle(tela, COR_PRETA, (pos_x_j2, pos_y_j2), 15, 2)
+                texto = FONTE_CASTELO.render(str(id_castelo), True, COR_PRETA)
+                retangulo_texto = texto.get_rect(center=posicao_atual)
+                tela.blit(texto, retangulo_texto)
                 
-                texto_t2 = FONTE_TROPAS.render(str(tropas_j2), True, (255, 255, 255))
-                retangulo_t2 = texto_t2.get_rect(center=(pos_x_j2, pos_y_j2))
-                tela.blit(texto_t2, retangulo_t2)
+                tropas_j1 = castelo.tropas[1]
+                tropas_j2 = castelo.tropas[2]
+                
+                if tropas_j1 > 0:
+                    pos_x_j1 = posicao_atual[0] - 25
+                    pos_y_j1 = posicao_atual[1] - 25
+                    pygame.draw.circle(tela, COR_JOGADOR_1, (pos_x_j1, pos_y_j1), 15)
+                    pygame.draw.circle(tela, COR_PRETA, (pos_x_j1, pos_y_j1), 15, 2)
+                    
+                    texto_t1 = FONTE_TROPAS.render(str(tropas_j1), True, (255, 255, 255))
+                    retangulo_t1 = texto_t1.get_rect(center=(pos_x_j1, pos_y_j1))
+                    tela.blit(texto_t1, retangulo_t1)
+                    
+                if tropas_j2 > 0:
+                    pos_x_j2 = posicao_atual[0] + 25
+                    pos_y_j2 = posicao_atual[1] - 25
+                    pygame.draw.circle(tela, COR_JOGADOR_2, (pos_x_j2, pos_y_j2), 15)
+                    pygame.draw.circle(tela, COR_PRETA, (pos_x_j2, pos_y_j2), 15, 2)
+                    
+                    texto_t2 = FONTE_TROPAS.render(str(tropas_j2), True, (255, 255, 255))
+                    retangulo_t2 = texto_t2.get_rect(center=(pos_x_j2, pos_y_j2))
+                    tela.blit(texto_t2, retangulo_t2)
             
-        if estado_jogo == "RODANDO":
             if len(dados_na_tela) == 0:
                 cor_fundo_botao = (200, 200, 200)
                 cor_texto_botao = COR_PRETA
@@ -177,10 +214,15 @@ def iniciar_jogo():
                 cor_vencedor = COR_PRETA
                 
             superficie_vencedor = fonte_fim.render(texto_vencedor, True, cor_vencedor)
-            tela.blit(superficie_vencedor, superficie_vencedor.get_rect(center=(LARGURA_TELA // 2, 550)))
+            tela.blit(superficie_vencedor, superficie_vencedor.get_rect(center=(LARGURA_TELA // 2, 300)))
             
             texto_pontos = fonte_botao.render(f"J1: {pontuacao_final[1]} pontos  |  J2: {pontuacao_final[2]} pontos", True, COR_PRETA)
-            tela.blit(texto_pontos, texto_pontos.get_rect(center=(LARGURA_TELA // 2, 600)))
+            tela.blit(texto_pontos, texto_pontos.get_rect(center=(LARGURA_TELA // 2, 380)))
+            
+            pygame.draw.rect(tela, (200, 200, 200), rect_botao_reiniciar)
+            pygame.draw.rect(tela, COR_PRETA, rect_botao_reiniciar, 2)
+            texto_reiniciar = fonte_botao.render("Jogar Novamente", True, COR_PRETA)
+            tela.blit(texto_reiniciar, texto_reiniciar.get_rect(center=rect_botao_reiniciar.center))
             
         pygame.display.flip()
         relogio.tick(60)

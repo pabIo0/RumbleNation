@@ -1,10 +1,10 @@
 import random
 
 class Jogador:
-    def __init__(self, nome, id_jogador):
+    def __init__(self, nome, id_jogador, tropas_iniciais):
         self.nome = nome
         self.id_jogador = id_jogador
-        self.tropas = 36
+        self.tropas = tropas_iniciais
         self.medalhas = 0
 
     def remover_tropas(self, quantidade_tropas):
@@ -12,7 +12,6 @@ class Jogador:
             self.tropas -= quantidade_tropas
             return True
         return False
-
 
 class Castelo:
     def __init__(self, id_castelo, pontos_vitoria, vizinhos):
@@ -27,10 +26,10 @@ class Castelo:
 
 
 class LogicaJogo:
-    def __init__(self):
+    def __init__(self, tropas_iniciais=36):
         self.jogadores = {
-            1: Jogador("Jogador 1", 1),
-            2: Jogador("Jogador 2", 2)
+            1: Jogador("Jogador 1", 1, tropas_iniciais),
+            2: Jogador("Jogador 2", 2, tropas_iniciais)
         }
         self.id_jogador_atual = 1
         self.castelos = self._inicializar_castelos()
@@ -69,10 +68,12 @@ class LogicaJogo:
             
         jogador = self.jogadores[self.id_jogador_atual]
         quantidade_tropas = min(tropas_convertidas, jogador.tropas)
-        
+
+        # Tratamento de erro se o castelo alvo é válido
         if alvo_castelo not in self.castelos:
             return False, "Erro: Castelo inválido."
-        
+
+        # Tratamento de erro se o jogador tem tropas suficientes
         if not jogador.remover_tropas(quantidade_tropas):
             return False, "Erro: O jogador não tem tropas suficientes."
             
