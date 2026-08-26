@@ -71,7 +71,7 @@ def iniciar_jogo():
                     
                     if estado_jogo == "MENU":
                         if rect_botao_18.collidepoint(pos_mouse):
-                            jogo = LogicaJogo(2)
+                            jogo = LogicaJogo(18)
                             estado_jogo = "RODANDO"
                         elif rect_botao_36.collidepoint(pos_mouse):
                             jogo = LogicaJogo(36)
