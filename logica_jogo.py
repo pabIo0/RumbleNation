@@ -35,6 +35,9 @@ class LogicaJogo:
         self.castelos = self._inicializar_castelos()
         self.dados_atuais = []
         self.ordem_termino = []
+        self.castelo_resolucao_atual = 2
+        self.pontuacao_parcial = {1: 0, 2: 0}
+        self.mensagem_auditoria = "Pronto para iniciar a contagem."
         
     def _inicializar_castelos(self):
         return {
@@ -100,44 +103,47 @@ class LogicaJogo:
             elif len(self.ordem_termino) == 2:
                 jogador.medalhas = 2
 
-    def resolver_guerras(self):
-        """
-        Resolve as batalhas do castelo 2 ao 12 em ordem, calcula os pontos finais 
-        e aplica o sistema de reforço em cascata aos castelos vizinhos maiores.
-        """
-        pontuacao_final = {1: 0, 2: 0}
+    def resolver_batalha_atual(self):
+        if self.castelo_resolucao_atual > 12:
+            return True, "Fim do jogo."
 
-        for id_castelo in range(2, 13):
-            castelo = self.castelos[id_castelo]
-            
-            tropas_j1 = castelo.tropas[1]
-            tropas_j2 = castelo.tropas[2]
-            
-            if tropas_j1 == 0 and tropas_j2 == 0:
-                castelo.conquistado = True
-                continue
-                
-            vencedor_id = None
-            
-            if tropas_j1 > tropas_j2:
-                vencedor_id = 1
-            elif tropas_j2 > tropas_j1:
-                vencedor_id = 2
-            else:
-                medalhas_j1 = self.jogadores[1].medalhas
-                medalhas_j2 = self.jogadores[2].medalhas
-                
-                if medalhas_j1 > medalhas_j2:
-                    vencedor_id = 1
-                else:
-                    vencedor_id = 2
-                    
-            pontuacao_final[vencedor_id] = pontuacao_final[vencedor_id] + castelo.pontos_vitoria
+        castelo = self.castelos[self.castelo_resolucao_atual]
+        tropas_j1 = castelo.tropas[1]
+        tropas_j2 = castelo.tropas[2]
+        
+        if tropas_j1 == 0 and tropas_j2 == 0:
             castelo.conquistado = True
+            mensagem = f"Castelo {self.castelo_resolucao_atual} vazio."
+            self.castelo_resolucao_atual += 1
+            return False, mensagem
             
-            for id_vizinho in castelo.vizinhos:
-                if id_vizinho > id_castelo:
-                    quantidade_tropas_bonus = 1
-                    self.castelos[id_vizinho].adicionar_tropas(vencedor_id, quantidade_tropas_bonus)
-                    
-        return pontuacao_final
+        vencedor_id = None
+        if tropas_j1 > tropas_j2:
+            vencedor_id = 1
+        elif tropas_j2 > tropas_j1:
+            vencedor_id = 2
+        else:
+            medalhas_j1 = self.jogadores[1].medalhas
+            medalhas_j2 = self.jogadores[2].medalhas
+            if medalhas_j1 > medalhas_j2:
+                vencedor_id = 1
+            else:
+                vencedor_id = 2
+                
+        self.pontuacao_parcial[vencedor_id] += castelo.pontos_vitoria
+        castelo.conquistado = True
+        
+        vizinhos_afetados = []
+        for id_vizinho in castelo.vizinhos:
+            if id_vizinho > self.castelo_resolucao_atual:
+                self.castelos[id_vizinho].adicionar_tropas(vencedor_id, 1)
+                vizinhos_afetados.append(str(id_vizinho))
+                
+        if vizinhos_afetados:
+            texto_vizinhos = ", ".join(vizinhos_afetados)
+            mensagem = f"C{self.castelo_resolucao_atual}: J{vencedor_id} venceu (+{castelo.pontos_vitoria} pts). Cascata: {texto_vizinhos}"
+        else:
+            mensagem = f"C{self.castelo_resolucao_atual}: J{vencedor_id} venceu (+{castelo.pontos_vitoria} pts)."
+            
+        self.castelo_resolucao_atual += 1
+        return False, mensagem
