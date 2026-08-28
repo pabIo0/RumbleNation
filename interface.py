@@ -1,5 +1,6 @@
 import pygame
 import sys
+import random
 from logica_jogo import LogicaJogo
 
 pygame.init()
@@ -19,17 +20,17 @@ FONTE_CASTELO = pygame.font.SysFont('Arial', 24, bold=True)
 FONTE_TROPAS = pygame.font.SysFont('Arial', 16, bold=True)
 
 POSICOES_CASTELOS = {
-    8:  (850, 150),
-    4:  (750, 300),
-    3:  (800, 450),
-    5:  (600, 250),
-    2:  (650, 375),
-    10: (500, 450),
-    11: (450, 350),
-    7:  (400, 250),
-    9:  (250, 350),
-    6:  (150, 200),
-    12: (150, 500)
+    0:  (650, 375),
+    1:  (800, 450),
+    2:  (750, 300),
+    3:  (600, 250),
+    4:  (150, 200),
+    5:  (400, 250),
+    6:  (850, 150),
+    7:  (250, 350),
+    8:  (500, 450),
+    9:  (450, 350),
+    10: (150, 500)
 }
 
 def iniciar_jogo():
@@ -71,10 +72,12 @@ def iniciar_jogo():
                     
                     if estado_jogo == "MENU":
                         if rect_botao_18.collidepoint(pos_mouse):
-                            jogo = LogicaJogo(18)
+                            x = random.randint(1, 999999)
+                            jogo = LogicaJogo(18, seed=123)
                             estado_jogo = "RODANDO"
                         elif rect_botao_36.collidepoint(pos_mouse):
-                            jogo = LogicaJogo(36)
+                            x = random.randint(1, 999999)
+                            jogo = LogicaJogo(36, seed=x)
                             estado_jogo = "RODANDO"
                             
                     elif estado_jogo == "RODANDO":
@@ -144,13 +147,13 @@ def iniciar_jogo():
             
         elif estado_jogo == "RODANDO" or estado_jogo == "AUDITORIA":
             for id_castelo, castelo in jogo.castelos.items():
-                posicao_atual = POSICOES_CASTELOS[id_castelo]
+                posicao_atual = POSICOES_CASTELOS[castelo.id_local]
                 for id_vizinho in castelo.vizinhos:
-                    posicao_vizinho = POSICOES_CASTELOS[id_vizinho]
+                    posicao_vizinho = POSICOES_CASTELOS[jogo.castelos[id_vizinho].id_local]
                     pygame.draw.line(tela, (150, 150, 150), posicao_atual, posicao_vizinho, 4)
 
             for id_castelo, castelo in jogo.castelos.items():
-                posicao_atual = POSICOES_CASTELOS[id_castelo]
+                posicao_atual = POSICOES_CASTELOS[castelo.id_local]
                 
                 if castelo.conquistado:
                     pygame.draw.circle(tela, (200, 200, 200), posicao_atual, 35)

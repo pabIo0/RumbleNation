@@ -14,10 +14,11 @@ class Jogador:
         return False
 
 class Castelo:
-    def __init__(self, id_castelo, pontos_vitoria, vizinhos):
+    def __init__(self, id_castelo, pontos_vitoria, vizinhos, id_local):
         self.id_castelo = id_castelo
         self.pontos_vitoria = pontos_vitoria
         self.vizinhos = vizinhos
+        self.id_local = id_local
         self.tropas = {1: 0, 2: 0}
         self.conquistado = False
 
@@ -26,7 +27,10 @@ class Castelo:
 
 
 class LogicaJogo:
-    def __init__(self, tropas_iniciais=36):
+    def __init__(self, tropas_iniciais=36, seed=None):
+        if seed is not None:
+            random.seed(seed)
+            
         self.jogadores = {
             1: Jogador("Jogador 1", 1, tropas_iniciais),
             2: Jogador("Jogador 2", 2, tropas_iniciais)
@@ -40,22 +44,41 @@ class LogicaJogo:
         self.mensagem_auditoria = "Pronto para iniciar a contagem."
         
     def _inicializar_castelos(self):
-        return {
-            2: Castelo(2, 2, [3, 4, 5, 10]),
-            3: Castelo(3, 2, [2, 4, 10]),
-            4: Castelo(4, 4, [2, 3, 8]),
-            5: Castelo(5, 4, [2, 10, 11]),
-            6: Castelo(6, 4, [7, 9, 12]),
-            7: Castelo(7, 6, [6, 9, 11]),
-            8: Castelo(8, 6, [4]),
-            9: Castelo(9, 6, [6, 7, 11]),
-            10: Castelo(10, 8, [2, 3, 5, 11]),
-            11: Castelo(11, 8, [5, 7, 9, 10]),
-            12: Castelo(12, 10, [6])
+        topologia_geografica = {
+            0: [1, 2, 3, 8],
+            1: [0, 2, 8],
+            2: [0, 1, 6],
+            3: [0, 8, 9],
+            4: [5, 7, 10],
+            5: [4, 7, 9],
+            6: [2],
+            7: [4, 5, 9],
+            8: [0, 1, 3, 9],
+            9: [3, 5, 7, 8],
+            10: [4]
         }
+        
+        vps_por_valor = {2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 6, 8: 6, 9: 6, 10: 8, 11: 8, 12: 10}
+        
+        locais = list(topologia_geografica.keys())
+        valores_disponiveis = list(vps_por_valor.keys())
+        
+        random.shuffle(valores_disponiveis)
+        
+        mapa_local_para_valor = {}
+        for i in range(len(locais)):
+            mapa_local_para_valor[locais[i]] = valores_disponiveis[i]
+            
+        castelos_criados = {}
+        for local in locais:
+            valor = mapa_local_para_valor[local]
+            vizinhos_locais = topologia_geografica[local]
+            vizinhos_valores = [mapa_local_para_valor[v_local] for v_local in vizinhos_locais]
+            castelos_criados[valor] = Castelo(valor, vps_por_valor[valor], vizinhos_valores, local)
+            
+        return castelos_criados
     
     def rolar_dados(self):
-        """Rola os 3 dados de 6 faces e salva no estado do jogo."""
         self.dados_atuais = [random.randint(1, 6) for _ in range(3)]
         return self.dados_atuais
 
@@ -72,11 +95,9 @@ class LogicaJogo:
         jogador = self.jogadores[self.id_jogador_atual]
         quantidade_tropas = min(tropas_convertidas, jogador.tropas)
 
-        # Tratamento de erro se o castelo alvo é válido
         if alvo_castelo not in self.castelos:
             return False, "Erro: Castelo inválido."
 
-        # Tratamento de erro se o jogador tem tropas suficientes
         if not jogador.remover_tropas(quantidade_tropas):
             return False, "Erro: O jogador não tem tropas suficientes."
             
@@ -94,7 +115,6 @@ class LogicaJogo:
         return True, mensagem_sucesso
 
     def verificar_fim_de_jogo(self, id_jogador):
-        """Verifica quem zerou o estoque primeiro para a regra do desempate."""
         jogador = self.jogadores[id_jogador]
         if jogador.tropas == 0 and id_jogador not in self.ordem_termino:
             self.ordem_termino.append(id_jogador)
