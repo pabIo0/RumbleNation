@@ -1,11 +1,18 @@
 import random
 
+class Carta:
+    def __init__(self, id_carta, nome, efeito):
+        self.id_carta = id_carta
+        self.nome = nome
+        self.efeito = efeito
+
 class Jogador:
     def __init__(self, nome, id_jogador, tropas_iniciais):
         self.nome = nome
         self.id_jogador = id_jogador
         self.tropas = tropas_iniciais
         self.medalhas = 0
+        self.mao = []
 
     def remover_tropas(self, quantidade_tropas):
         if self.tropas >= quantidade_tropas:
@@ -42,6 +49,17 @@ class LogicaJogo:
         self.castelo_resolucao_atual = 2
         self.pontuacao_parcial = {1: 0, 2: 0}
         self.mensagem_auditoria = "Pronto para iniciar a contagem."
+        
+        self.modificador_castelo = 0
+        self._distribuir_cartas_teste()
+
+    def _distribuir_cartas_teste(self):
+        for i in range(1, 3):
+            self.jogadores[i].mao = [
+                Carta(1, "Rerrolar", "rerrolar"),
+                Carta(2, "+2 Castelo", "+2_castelo"),
+                Carta(3, "-2 Castelo", "-2_castelo")
+            ]
         
     def _inicializar_castelos(self):
         topologia_geografica = {
@@ -82,8 +100,73 @@ class LogicaJogo:
         self.dados_atuais = [random.randint(1, 6) for _ in range(3)]
         return self.dados_atuais
 
+    def usar_carta(self, id_jogador, indice_carta):
+        if id_jogador != self.id_jogador_atual:
+            return self.obter_estado(erro="Não é a vez deste jogador.")
+            
+        jogador = self.jogadores[id_jogador]
+        if indice_carta < 0 or indice_carta >= len(jogador.mao):
+            return self.obter_estado(erro="Carta inválida.")
+            
+        carta = jogador.mao.pop(indice_carta)
+        
+        if carta.efeito == "rerrolar":
+            self.rolar_dados()
+        elif carta.efeito == "+2_castelo":
+            self.modificador_castelo += 2
+        elif carta.efeito == "-2_castelo":
+            self.modificador_castelo -= 2
+            
+        return self.obter_estado()
+
+    def obter_estado(self, erro=None):
+        estado_castelos = {}
+        for id_castelo, castelo in self.castelos.items():
+            estado_castelos[id_castelo] = {
+                'id_local': castelo.id_local,
+                'tropas_j1': castelo.tropas[1],
+                'tropas_j2': castelo.tropas[2],
+                'conquistado': castelo.conquistado
+            }
+            
+        estado_jogadores = {
+            1: {
+                'tropas': self.jogadores[1].tropas, 
+                'medalhas': self.jogadores[1].medalhas,
+                'cartas': [{'nome': c.nome, 'efeito': c.efeito} for c in self.jogadores[1].mao]
+            },
+            2: {
+                'tropas': self.jogadores[2].tropas, 
+                'medalhas': self.jogadores[2].medalhas,
+                'cartas': [{'nome': c.nome, 'efeito': c.efeito} for c in self.jogadores[2].mao]
+            }
+        }
+        
+        if erro == None:
+            jogada_valida = True
+        else:
+            jogada_valida = False
+            
+        if self.jogadores[1].tropas == 0 and self.jogadores[2].tropas == 0:
+            partida_acabou = True
+        else:
+            partida_acabou = False
+
+        estado_do_jogo = {
+            'sucesso': jogada_valida,
+            'erro': erro,
+            'jogador_atual': self.id_jogador_atual,
+            'castelos': estado_castelos,
+            'jogadores': estado_jogadores,
+            'fim_de_jogo': partida_acabou,
+            'modificador_castelo': self.modificador_castelo,
+            'dados_atuais': self.dados_atuais
+        }
+
+        return estado_do_jogo
+
     def jogar_turno(self, dados_para_castelo, dado_para_tropas):
-        alvo_castelo = sum(dados_para_castelo)
+        alvo_castelo = sum(dados_para_castelo) + self.modificador_castelo
         
         if dado_para_tropas == 1 or dado_para_tropas == 2:
             tropas_convertidas = 1
@@ -96,23 +179,23 @@ class LogicaJogo:
         quantidade_tropas = min(tropas_convertidas, jogador.tropas)
 
         if alvo_castelo not in self.castelos:
-            return False, "Erro: Castelo inválido."
+            return self.obter_estado(erro="Castelo inválido.")
 
         if not jogador.remover_tropas(quantidade_tropas):
-            return False, "Erro: O jogador não tem tropas suficientes."
+            return self.obter_estado(erro="O jogador não tem tropas suficientes.")
             
         self.castelos[alvo_castelo].adicionar_tropas(self.id_jogador_atual, quantidade_tropas)
         
         self.verificar_fim_de_jogo(self.id_jogador_atual)
         
-        mensagem_sucesso = f"Jogador {self.id_jogador_atual} | {quantidade_tropas} tropas adicionadas no castelo {alvo_castelo}"
+        self.modificador_castelo = 0
         
         if self.id_jogador_atual == 1:
             self.id_jogador_atual = 2
         else:
             self.id_jogador_atual = 1
             
-        return True, mensagem_sucesso
+        return self.obter_estado()
 
     def verificar_fim_de_jogo(self, id_jogador):
         jogador = self.jogadores[id_jogador]

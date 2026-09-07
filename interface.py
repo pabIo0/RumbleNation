@@ -87,31 +87,50 @@ def iniciar_jogo():
                                 indices_selecionados = []
                             
                         if len(dados_na_tela) > 0:
-                            for i in range(3):
-                                if rects_dados[i].collidepoint(pos_mouse):
-                                    if i in indices_selecionados:
-                                        indices_selecionados.remove(i)
+                            estado_atual = jogo.obter_estado()
+                            cartas_jogador = estado_atual['jogadores'][estado_atual['jogador_atual']]['cartas']
+                            
+                            clicou_em_carta = False
+                            for i in range(len(cartas_jogador)):
+                                rect_carta = pygame.Rect(30 + i * 110, 610, 100, 50)
+                                if rect_carta.collidepoint(pos_mouse):
+                                    estado_novo = jogo.usar_carta(estado_atual['jogador_atual'], i)
+                                    if not estado_novo['sucesso']:
+                                        print(f"Erro: {estado_novo['erro']}")
                                     else:
-                                        if len(indices_selecionados) < 2:
-                                            indices_selecionados.append(i)
-                                            
-                                            if len(indices_selecionados) == 2:
-                                                indice_tropa = -1
-                                                for j in range(3):
-                                                    if j not in indices_selecionados:
-                                                        indice_tropa = j
+                                        dados_na_tela = estado_novo['dados_atuais']
+                                        indices_selecionados = []
+                                    clicou_em_carta = True
+                                    break
+                            
+                            if not clicou_em_carta:
+                                for i in range(3):
+                                    if rects_dados[i].collidepoint(pos_mouse):
+                                        if i in indices_selecionados:
+                                            indices_selecionados.remove(i)
+                                        else:
+                                            if len(indices_selecionados) < 2:
+                                                indices_selecionados.append(i)
                                                 
-                                                dados_castelo = [dados_na_tela[indices_selecionados[0]], dados_na_tela[indices_selecionados[1]]]
-                                                dado_tropa = dados_na_tela[indice_tropa]
-                                                
-                                                sucesso, mensagem = jogo.jogar_turno(dados_castelo, dado_tropa)
-                                                print(mensagem)
-                                                
-                                                dados_na_tela = []
-                                                indices_selecionados = []
-                                                
-                                                if jogo.jogadores[1].tropas == 0 and jogo.jogadores[2].tropas == 0:
-                                                    estado_jogo = "AUDITORIA"
+                                                if len(indices_selecionados) == 2:
+                                                    indice_tropa = -1
+                                                    for j in range(3):
+                                                        if j not in indices_selecionados:
+                                                            indice_tropa = j
+                                                    
+                                                    dados_castelo = [dados_na_tela[indices_selecionados[0]], dados_na_tela[indices_selecionados[1]]]
+                                                    dado_tropa = dados_na_tela[indice_tropa]
+                                                    
+                                                    estado_novo = jogo.jogar_turno(dados_castelo, dado_tropa)
+                                                    
+                                                    if not estado_novo['sucesso']:
+                                                        print(f"Erro: {estado_novo['erro']}")
+                                                    
+                                                    dados_na_tela = []
+                                                    indices_selecionados = []
+                                                    
+                                                    if estado_novo['fim_de_jogo']:
+                                                        estado_jogo = "AUDITORIA"
                                                     
                     elif estado_jogo == "AUDITORIA":
                         if rect_botao_auditoria.collidepoint(pos_mouse):
@@ -211,6 +230,22 @@ def iniciar_jogo():
                         pygame.draw.rect(tela, COR_PRETA, rects_dados[i], 2)
                         texto_dado = fonte_dado.render(str(dados_na_tela[i]), True, COR_PRETA)
                         tela.blit(texto_dado, texto_dado.get_rect(center=rects_dados[i].center))
+                        
+                    estado_atual = jogo.obter_estado()
+                    
+                    cartas_jogador = estado_atual['jogadores'][estado_atual['jogador_atual']]['cartas']
+                    for i in range(len(cartas_jogador)):
+                        rect_carta = pygame.Rect(30 + i * 110, 610, 100, 50)
+                        pygame.draw.rect(tela, (200, 220, 255), rect_carta)
+                        pygame.draw.rect(tela, COR_PRETA, rect_carta, 2)
+                        texto_carta = FONTE_TROPAS.render(cartas_jogador[i]['nome'], True, COR_PRETA)
+                        tela.blit(texto_carta, texto_carta.get_rect(center=rect_carta.center))
+
+                    modificador = estado_atual['modificador_castelo']
+                    if modificador != 0:
+                        sinal = "+" if modificador > 0 else ""
+                        texto_mod = fonte_botao.render(f"Modificador: {sinal}{modificador} Castelo", True, (200, 100, 0))
+                        tela.blit(texto_mod, (700, 620))
                         
             elif estado_jogo == "AUDITORIA":
                 pygame.draw.rect(tela, (200, 200, 200), rect_botao_auditoria)
