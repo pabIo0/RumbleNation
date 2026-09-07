@@ -221,6 +221,59 @@ class LogicaJogo:
         
         return self.obter_estado()
 
+    def jogar_turno(self, dados_para_castelo, dado_para_tropas):
+        alvo_castelo = sum(dados_para_castelo) + self.modificador_castelo
+        
+        if dado_para_tropas == 1 or dado_para_tropas == 2:
+            tropas_convertidas = 1
+        elif dado_para_tropas == 3 or dado_para_tropas == 4:
+            tropas_convertidas = 2
+        else:
+            tropas_convertidas = 3
+            
+        jogador = self.jogadores[self.id_jogador_atual]
+        
+        quantidade_tropas = min(tropas_convertidas + self.modificador_tropas, jogador.tropas)
+
+        if alvo_castelo not in self.castelos:
+            return self.obter_estado(erro="Castelo inválido.")
+
+        if not jogador.remover_tropas(quantidade_tropas):
+            return self.obter_estado(erro="O jogador não tem tropas suficientes.")
+            
+        self.castelos[alvo_castelo].adicionar_tropas(self.id_jogador_atual, quantidade_tropas)
+        
+        self.verificar_fim_de_jogo(self.id_jogador_atual)
+        
+        self.modificador_castelo = 0
+        self.modificador_tropas = 0
+        
+        if self.id_jogador_atual == 1:
+            self.id_jogador_atual = 2
+        else:
+            self.id_jogador_atual = 1
+            
+        return self.obter_estado()
+
+    def passar_vez(self, id_jogador):
+        if id_jogador != self.id_jogador_atual:
+            return self.obter_estado(erro="Não é a vez deste jogador.")
+            
+        jogador = self.jogadores[id_jogador]
+        if jogador.tropas > 0:
+            return self.obter_estado(erro="Você ainda tem tropas, não pode passar a vez.")
+            
+        self.modificador_castelo = 0
+        self.modificador_tropas = 0
+        self.dados_atuais = []
+        
+        if self.id_jogador_atual == 1:
+            self.id_jogador_atual = 2
+        else:
+            self.id_jogador_atual = 1
+            
+        return self.obter_estado()
+
     def obter_estado(self, erro=None):
         estado_castelos = {}
         for id_castelo, castelo in self.castelos.items():
@@ -277,40 +330,6 @@ class LogicaJogo:
         }
 
         return estado_do_jogo
-
-    def jogar_turno(self, dados_para_castelo, dado_para_tropas):
-        alvo_castelo = sum(dados_para_castelo) + self.modificador_castelo
-        
-        if dado_para_tropas == 1 or dado_para_tropas == 2:
-            tropas_convertidas = 1
-        elif dado_para_tropas == 3 or dado_para_tropas == 4:
-            tropas_convertidas = 2
-        else:
-            tropas_convertidas = 3
-            
-        jogador = self.jogadores[self.id_jogador_atual]
-        
-        quantidade_tropas = min(tropas_convertidas + self.modificador_tropas, jogador.tropas)
-
-        if alvo_castelo not in self.castelos:
-            return self.obter_estado(erro="Castelo inválido.")
-
-        if not jogador.remover_tropas(quantidade_tropas):
-            return self.obter_estado(erro="O jogador não tem tropas suficientes.")
-            
-        self.castelos[alvo_castelo].adicionar_tropas(self.id_jogador_atual, quantidade_tropas)
-        
-        self.verificar_fim_de_jogo(self.id_jogador_atual)
-        
-        self.modificador_castelo = 0
-        self.modificador_tropas = 0
-        
-        if self.id_jogador_atual == 1:
-            self.id_jogador_atual = 2
-        else:
-            self.id_jogador_atual = 1
-            
-        return self.obter_estado()
 
     def verificar_fim_de_jogo(self, id_jogador):
         jogador = self.jogadores[id_jogador]
