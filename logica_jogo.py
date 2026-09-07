@@ -73,68 +73,68 @@ class LogicaJogo:
         self.mercado_aberto = random.sample(baralho_completo, 3)
         
     def _inicializar_castelos(self):
-        topologia_geografica = {
+        topologia = {
             0: [1, 2, 3, 8],
             1: [0, 2, 8],
             2: [0, 1, 6],
             3: [0, 8, 9],
             4: [5, 7, 10],
             5: [4, 7, 9],
-            6: [2],
-            7: [4, 5, 9],
+            6: [2], 7: [4, 5, 9],
             8: [0, 1, 3, 9],
             9: [3, 5, 7, 8],
             10: [4]
         }
+        vps = {2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 6, 8: 6, 9: 6, 10: 8, 11: 8, 12: 10}
         
-        vps_por_valor = {2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 6, 8: 6, 9: 6, 10: 8, 11: 8, 12: 10}
+        locais = list(topologia.keys())
+        valores = list(vps.keys())
+        random.shuffle(valores)
         
-        locais = list(topologia_geografica.keys())
-        valores_disponiveis = list(vps_por_valor.keys())
-        
-        random.shuffle(valores_disponiveis)
-        
-        mapa_local_para_valor = {}
+        mapa_valores = {}
         for i in range(len(locais)):
-            mapa_local_para_valor[locais[i]] = valores_disponiveis[i]
+            mapa_valores[locais[i]] = valores[i]
             
-        castelos_criados = {}
+        castelos = {}
         for local in locais:
-            valor = mapa_local_para_valor[local]
-            vizinhos_locais = topologia_geografica[local]
-            vizinhos_valores = [mapa_local_para_valor[v_local] for v_local in vizinhos_locais]
-            castelos_criados[valor] = Castelo(valor, vps_por_valor[valor], vizinhos_valores, local)
+            valor = mapa_valores[local]
+            vizinhos = []
+            for vizinho_local in topologia[local]:
+                vizinhos.append(mapa_valores[vizinho_local])
+                
+            castelos[valor] = Castelo(valor, vps[valor], vizinhos, local)
             
-        return castelos_criados
+        return castelos
     
     def rolar_dados(self):
-        self.dados_atuais = [random.randint(1, 6) for _ in range(3)]
+        self.dados_atuais = []
+        for _ in range(3):
+            self.dados_atuais.append(random.randint(1, 6))
         return self.dados_atuais
 
     def usar_carta(self, id_jogador, indice_mercado):
         if id_jogador != self.id_jogador_atual:
-            return self.obter_estado(erro="Não é a vez deste jogador.")
+            raise ValueError("Não é a vez deste jogador.")
             
         jogador = self.jogadores[id_jogador]
-        
         if jogador.usou_carta:
-            return self.obter_estado(erro="Você já utilizou uma carta nesta partida.")
+            raise ValueError("Você já utilizou uma carta nesta partida.")
             
-        t_j1 = self.jogadores[1].tropas
-        t_j2 = self.jogadores[2].tropas
-        if t_j1 == self.tropas_iniciais or t_j2 == self.tropas_iniciais:
-            return self.obter_estado(erro="Mercado fechado: aguarde o 2º turno.")
-        if t_j1 <= 3 or t_j2 <= 3:
-            return self.obter_estado(erro="Mercado fechado: fim de jogo iminente.")
+        t1 = self.jogadores[1].tropas
+        t2 = self.jogadores[2].tropas
+        
+        if t1 == self.tropas_iniciais or t2 == self.tropas_iniciais:
+            raise ValueError("Mercado fechado: aguarde o 2º turno.")
+            
+        if t1 <= 3 or t2 <= 3:
+            raise ValueError("Mercado fechado: fim de jogo iminente.")
             
         if indice_mercado < 0 or indice_mercado >= len(self.mercado_aberto):
-            return self.obter_estado(erro="Carta indisponível no mercado.")
+            raise ValueError("Carta indisponível no mercado.")
             
         carta_alvo = self.mercado_aberto[indice_mercado]
-        
-        efeitos_simples = ["rerrolar", "+2_castelo", "-2_castelo", "+1_reforco"]
-        if carta_alvo.efeito not in efeitos_simples:
-            return self.obter_estado(erro="Esta carta requer a seleção de um alvo no mapa.")
+        if carta_alvo.efeito not in ["rerrolar", "+2_castelo", "-2_castelo", "+1_reforco"]:
+            raise ValueError("Esta carta requer a seleção de um alvo no mapa.")
             
         carta = self.mercado_aberto.pop(indice_mercado)
         jogador.usou_carta = True
@@ -147,79 +147,68 @@ class LogicaJogo:
             self.modificador_castelo -= 2
         elif carta.efeito == "+1_reforco":
             self.modificador_tropas += 1
-            
-        return self.obter_estado()
 
     def executar_marcha(self, id_jogador, indice_mercado, origem, destino):
         if id_jogador != self.id_jogador_atual:
-            return self.obter_estado(erro="Não é a vez deste jogador.")
+            raise ValueError("Não é a vez deste jogador.")
             
         jogador = self.jogadores[id_jogador]
-        
         if jogador.usou_carta:
-            return self.obter_estado(erro="Você já utilizou uma carta nesta partida.")
+            raise ValueError("Você já utilizou uma carta nesta partida.")
             
         if origem not in self.castelos or destino not in self.castelos:
-            return self.obter_estado(erro="Castelo inválido.")
+            raise ValueError("Castelo inválido.")
             
         castelo_origem = self.castelos[origem]
-        castelo_destino = self.castelos[destino]
-        
         if castelo_origem.tropas[id_jogador] <= 0:
-            return self.obter_estado(erro="Você não tem tropas na origem selecionada.")
+            raise ValueError("Você não tem tropas na origem selecionada.")
             
         if destino not in castelo_origem.vizinhos:
-            return self.obter_estado(erro="O destino deve ser vizinho da origem.")
+            raise ValueError("O destino deve ser vizinho da origem.")
             
         self.mercado_aberto.pop(indice_mercado)
         jogador.usou_carta = True
         
         castelo_origem.tropas[id_jogador] -= 1
-        castelo_destino.tropas[id_jogador] += 1
+        self.castelos[destino].tropas[id_jogador] += 1
         
-        self.modificador_castelo = 0
-        self.modificador_tropas = 0
-        self.dados_atuais = []
-        
-        if self.id_jogador_atual == 1:
-            self.id_jogador_atual = 2
-        else:
-            self.id_jogador_atual = 1
-            
-        return self.obter_estado()
+        self._limpar_modificadores_e_passar_vez()
 
     def executar_alteracao_dado(self, id_jogador, indice_mercado, indice_dado):
         if id_jogador != self.id_jogador_atual:
-            return self.obter_estado(erro="Não é a vez deste jogador.")
+            raise ValueError("Não é a vez deste jogador.")
             
         jogador = self.jogadores[id_jogador]
-        
         if jogador.usou_carta:
-            return self.obter_estado(erro="Você já utilizou uma carta nesta partida.")
+            raise ValueError("Você já utilizou uma carta nesta partida.")
             
-        if not self.dados_atuais or indice_dado < 0 or indice_dado > 2:
-            return self.obter_estado(erro="Dado inválido.")
+        if not self.dados_atuais:
+            raise ValueError("Dado inválido.")
+            
+        if indice_dado < 0 or indice_dado > 2:
+            raise ValueError("Dado inválido.")
             
         carta = self.mercado_aberto[indice_mercado]
         valor_atual = self.dados_atuais[indice_dado]
         
         if carta.efeito == "+1_dado":
-            if valor_atual == 6:
-                return self.obter_estado(erro="O dado já está no valor máximo (6).")
+            if valor_atual == 6: 
+                raise ValueError("O dado já está no valor máximo (6).")
             self.dados_atuais[indice_dado] += 1
+            
         elif carta.efeito == "-1_dado":
-            if valor_atual == 1:
-                return self.obter_estado(erro="O dado já está no valor mínimo (1).")
+            if valor_atual == 1: 
+                raise ValueError("O dado já está no valor mínimo (1).")
             self.dados_atuais[indice_dado] -= 1
+            
         elif carta.efeito == "inverter_dado":
             self.dados_atuais[indice_dado] = 7 - valor_atual
+            
         else:
-            return self.obter_estado(erro="Efeito inválido para alteração de dados.")
+            raise ValueError("Efeito inválido para alteração de dados.")
             
         self.mercado_aberto.pop(indice_mercado)
         jogador.usou_carta = True
-        
-        return self.obter_estado()
 
     def jogar_turno(self, dados_para_castelo, dado_para_tropas):
         alvo_castelo = sum(dados_para_castelo) + self.modificador_castelo
@@ -232,155 +221,129 @@ class LogicaJogo:
             tropas_convertidas = 3
             
         jogador = self.jogadores[self.id_jogador_atual]
-        
-        quantidade_tropas = min(tropas_convertidas + self.modificador_tropas, jogador.tropas)
+        quantidade = min(tropas_convertidas + self.modificador_tropas, jogador.tropas)
 
         if alvo_castelo not in self.castelos:
-            return self.obter_estado(erro="Castelo inválido.")
+            raise ValueError("Castelo inválido.")
 
-        if not jogador.remover_tropas(quantidade_tropas):
-            return self.obter_estado(erro="O jogador não tem tropas suficientes.")
+        if not jogador.remover_tropas(quantidade):
+            raise ValueError("O jogador não tem tropas suficientes.")
             
-        self.castelos[alvo_castelo].adicionar_tropas(self.id_jogador_atual, quantidade_tropas)
+        self.castelos[alvo_castelo].adicionar_tropas(self.id_jogador_atual, quantidade)
         
-        self.verificar_fim_de_jogo(self.id_jogador_atual)
-        
-        self.modificador_castelo = 0
-        self.modificador_tropas = 0
-        
-        if self.id_jogador_atual == 1:
-            self.id_jogador_atual = 2
-        else:
-            self.id_jogador_atual = 1
+        if jogador.tropas == 0 and self.id_jogador_atual not in self.ordem_termino:
+            self.ordem_termino.append(self.id_jogador_atual)
+            if len(self.ordem_termino) == 1:
+                jogador.medalhas = 3
+            else:
+                jogador.medalhas = 2
             
-        return self.obter_estado()
+        self._limpar_modificadores_e_passar_vez()
 
     def passar_vez(self, id_jogador):
         if id_jogador != self.id_jogador_atual:
-            return self.obter_estado(erro="Não é a vez deste jogador.")
+            raise ValueError("Não é a vez deste jogador.")
             
-        jogador = self.jogadores[id_jogador]
-        if jogador.tropas > 0:
-            return self.obter_estado(erro="Você ainda tem tropas, não pode passar a vez.")
+        if self.jogadores[id_jogador].tropas > 0:
+            raise ValueError("Você ainda tem tropas, não pode passar a vez.")
             
+        self._limpar_modificadores_e_passar_vez()
+        
+    def _limpar_modificadores_e_passar_vez(self):
         self.modificador_castelo = 0
         self.modificador_tropas = 0
         self.dados_atuais = []
-        
         if self.id_jogador_atual == 1:
             self.id_jogador_atual = 2
         else:
             self.id_jogador_atual = 1
-            
-        return self.obter_estado()
 
-    def obter_estado(self, erro=None):
+    def obter_estado(self):
         estado_castelos = {}
-        for id_castelo, castelo in self.castelos.items():
+        for id_castelo, c in self.castelos.items():
             estado_castelos[id_castelo] = {
-                'id_local': castelo.id_local,
-                'tropas_j1': castelo.tropas[1],
-                'tropas_j2': castelo.tropas[2],
-                'conquistado': castelo.conquistado,
-                'vizinhos': castelo.vizinhos
+                'id_local': c.id_local,
+                'tropas_j1': c.tropas[1],
+                'tropas_j2': c.tropas[2],
+                'conquistado': c.conquistado,
+                'vizinhos': c.vizinhos
             }
             
-        estado_jogadores = {
-            1: {
-                'tropas': self.jogadores[1].tropas, 
-                'medalhas': self.jogadores[1].medalhas,
-                'usou_carta': self.jogadores[1].usou_carta
-            },
-            2: {
-                'tropas': self.jogadores[2].tropas, 
-                'medalhas': self.jogadores[2].medalhas,
-                'usou_carta': self.jogadores[2].usou_carta
+        estado_jogadores = {}
+        for id_j, j in self.jogadores.items():
+            estado_jogadores[id_j] = {
+                'tropas': j.tropas, 
+                'medalhas': j.medalhas,
+                'usou_carta': j.usou_carta
             }
-        }
+            
+        t1 = self.jogadores[1].tropas
+        t2 = self.jogadores[2].tropas
         
-        if erro == None:
-            jogada_valida = True
-        else:
-            jogada_valida = False
+        mercado_fechado = False
+        if t1 == self.tropas_iniciais or t2 == self.tropas_iniciais:
+            mercado_fechado = True
+        elif t1 <= 3 or t2 <= 3:
+            mercado_fechado = True
             
-        if self.jogadores[1].tropas == 0 and self.jogadores[2].tropas == 0:
-            partida_acabou = True
-        else:
-            partida_acabou = False
-            
-        t_j1 = self.jogadores[1].tropas
-        t_j2 = self.jogadores[2].tropas
-        if (t_j1 == self.tropas_iniciais or t_j2 == self.tropas_iniciais) or (t_j1 <= 3 or t_j2 <= 3):
-            mercado_bloqueado = True
-        else:
-            mercado_bloqueado = False
+        partida_fim = False
+        if t1 == 0 and t2 == 0:
+            partida_fim = True
 
-        estado_do_jogo = {
-            'sucesso': jogada_valida,
-            'erro': erro,
+        lista_mercado = []
+        for carta in self.mercado_aberto:
+            lista_mercado.append({'nome': carta.nome, 'efeito': carta.efeito})
+
+        return {
             'jogador_atual': self.id_jogador_atual,
             'castelos': estado_castelos,
             'jogadores': estado_jogadores,
-            'fim_de_jogo': partida_acabou,
+            'fim_de_jogo': partida_fim,
             'modificador_castelo': self.modificador_castelo,
             'modificador_tropas': self.modificador_tropas,
             'dados_atuais': self.dados_atuais,
-            'mercado': [{'nome': c.nome, 'efeito': c.efeito} for c in self.mercado_aberto],
-            'mercado_bloqueado': mercado_bloqueado
+            'mercado': lista_mercado,
+            'mercado_bloqueado': mercado_fechado
         }
-
-        return estado_do_jogo
-
-    def verificar_fim_de_jogo(self, id_jogador):
-        jogador = self.jogadores[id_jogador]
-        if jogador.tropas == 0 and id_jogador not in self.ordem_termino:
-            self.ordem_termino.append(id_jogador)
-            if len(self.ordem_termino) == 1:
-                jogador.medalhas = 3 
-            elif len(self.ordem_termino) == 2:
-                jogador.medalhas = 2
 
     def resolver_batalha_atual(self):
         if self.castelo_resolucao_atual > 12:
             return True, "Fim do jogo."
 
         castelo = self.castelos[self.castelo_resolucao_atual]
-        tropas_j1 = castelo.tropas[1]
-        tropas_j2 = castelo.tropas[2]
+        t1 = castelo.tropas[1]
+        t2 = castelo.tropas[2]
         
-        if tropas_j1 == 0 and tropas_j2 == 0:
+        if t1 == 0 and t2 == 0:
             castelo.conquistado = True
-            mensagem = f"Castelo {self.castelo_resolucao_atual} vazio."
+            msg = f"Castelo {self.castelo_resolucao_atual} vazio."
             self.castelo_resolucao_atual += 1
-            return False, mensagem
+            return False, msg
             
-        vencedor_id = None
-        if tropas_j1 > tropas_j2:
-            vencedor_id = 1
-        elif tropas_j2 > tropas_j1:
-            vencedor_id = 2
+        vencedor = None
+        if t1 > t2:
+            vencedor = 1
+        elif t2 > t1:
+            vencedor = 2
         else:
-            medalhas_j1 = self.jogadores[1].medalhas
-            medalhas_j2 = self.jogadores[2].medalhas
-            if medalhas_j1 > medalhas_j2:
-                vencedor_id = 1
+            if self.jogadores[1].medalhas > self.jogadores[2].medalhas:
+                vencedor = 1
             else:
-                vencedor_id = 2
+                vencedor = 2
                 
-        self.pontuacao_parcial[vencedor_id] += castelo.pontos_vitoria
+        self.pontuacao_parcial[vencedor] += castelo.pontos_vitoria
         castelo.conquistado = True
         
-        vizinhos_afetados = []
-        for id_vizinho in castelo.vizinhos:
-            if id_vizinho > self.castelo_resolucao_atual:
-                self.castelos[id_vizinho].adicionar_tropas(vencedor_id, 1)
-                vizinhos_afetados.append(str(id_vizinho))
+        cascatas = []
+        for vizinho in castelo.vizinhos:
+            if vizinho > self.castelo_resolucao_atual:
+                self.castelos[vizinho].adicionar_tropas(vencedor, 1)
+                cascatas.append(str(vizinho))
                 
-        if vizinhos_afetados:
-            texto_vizinhos = ", ".join(vizinhos_afetados)
-            mensagem = f"C{self.castelo_resolucao_atual}: J{vencedor_id} venceu (+{castelo.pontos_vitoria} pts). Cascata: {texto_vizinhos}"
-        else:
-            mensagem = f"C{self.castelo_resolucao_atual}: J{vencedor_id} venceu (+{castelo.pontos_vitoria} pts)."
+        msg = f"C{self.castelo_resolucao_atual}: J{vencedor} venceu (+{castelo.pontos_vitoria} pts)."
+        
+        if len(cascatas) > 0:
+            msg += f" Cascata: {', '.join(cascatas)}"
             
         self.castelo_resolucao_atual += 1
-        return False, mensagem
+        return False, msg
