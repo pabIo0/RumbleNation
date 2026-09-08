@@ -5,6 +5,7 @@ import math
 import os
 from logica_jogo import LogicaJogo
 
+# Dicionário estático: mapeia o ID do terreno (0 a 10) para suas coordenadas exatas (X, Y) na tela.
 POSICOES_CASTELOS = {
     0: (680, 440),
     1: (760, 520),
@@ -19,6 +20,7 @@ POSICOES_CASTELOS = {
     10: (120, 600)
 }
 
+# Paleta de cores padrão
 COR_FUNDO = (240, 240, 240)
 COR_PRETA = (0, 0, 0)
 COR_BRANCA = (255, 255, 255)
@@ -27,6 +29,10 @@ COR_JOGADOR_2 = (80, 150, 255)
 
 class InterfaceJogo:
     def __init__(self):
+        """
+        Construtor da interface gráfica. Inicializa o motor do Pygame, a janela principal,
+        o relógio de FPS e as fontes de texto que serão usadas para renderizar a HUD.
+        """
         pygame.init()
         self.tela = pygame.display.set_mode((1000, 700))
         pygame.display.set_caption("Rumble Nation - IA")
@@ -45,6 +51,11 @@ class InterfaceJogo:
         self._resetar_estado()
 
     def _carregar_assets(self):
+        """
+        Busca as imagens na pasta 'assets'. Se o arquivo existir, converte preservando
+        o canal Alpha (transparência) e redimensiona. Se não existir, retorna None
+        para que o jogo desenhe formas geométricas simples como fallback.
+        """
         arquivos_carregados = {}
         
         caminho_fundo = "assets/fundo.png"
@@ -66,17 +77,24 @@ class InterfaceJogo:
         return arquivos_carregados
 
     def _resetar_estado(self):
-        self.jogo = None
-        self.tela_atual = "MENU"
-        self.mensagem_aviso = ""
-        self.dados_na_tela = []
-        self.indices_selecionados = []
+        """
+        Limpa as variáveis temporárias da interface gráfica. 
+        Usada ao abrir o jogo e também ao clicar em "Jogar Novamente".
+        """
+        self.jogo = None # Instância da LogicaJogo (Backend)
+        self.tela_atual = "MENU" # Controla o roteamento ("MENU", "RODANDO", "AUDITORIA", "FIM")
+        self.mensagem_aviso = "" # String para exibir erros (ex: "Você não tem tropas")
         
-        self.modo_mira = None
-        self.origem_mira = -1
-        self.carta_mira_indice = -1
-        self.mercado_expandido = False
+        self.dados_na_tela = [] # Valores dos dados após rolar
+        self.indices_selecionados = [] # Quais dados o jogador clicou para usar no castelo
         
+        # Variáveis de controle para o uso de cartas táticas
+        self.modo_mira = None # Pode ser "MARCHA_ORIGEM", "MARCHA_DESTINO", "MIRA_DADO" ou None
+        self.origem_mira = -1 # ID do castelo selecionado como ponto de partida da marcha
+        self.carta_mira_indice = -1 # ID da carta que ativou a mira
+        self.mercado_expandido = False # Booleano que controla o Menu Retrátil (Hover) das cartas
+        
+        # Hitboxes físicas na tela (Retângulos invisíveis para detectar cliques)
         self.rects_dados = [
             pygame.Rect(770, 540, 60, 60), 
             pygame.Rect(840, 540, 60, 60), 
@@ -85,14 +103,17 @@ class InterfaceJogo:
         self.rect_rolar = pygame.Rect(770, 620, 200, 50)
 
     def iniciar(self):
+        """O laço infinito que mantém a janela aberta atualizando 60 vezes por segundo."""
         while True:
             self._processar_eventos()
             self._desenhar_tela()
             self.relogio.tick(60)
 
     def _processar_eventos(self):
+        """Analisa movimentos do mouse e cliques físicos capturados pelo sistema operacional."""
         pos_mouse = pygame.mouse.get_pos()
         
+        # Mecânica de Hover: Se o mouse invadir a área da aba, expanda o mercado.
         aba_rect = pygame.Rect(20, 20, 120, 35)
         area_mercado = pygame.Rect(15, 20, 300, 185)
         
@@ -107,14 +128,18 @@ class InterfaceJogo:
                 sys.exit()
                 
             if evento.type == pygame.MOUSEBUTTONDOWN:
-                if evento.button == 3:
+                if evento.button == 3: # Clique com o Botão Direito
                     if self.modo_mira is not None:
                         self._cancelar_mira()
-                elif evento.button == 1:
+                elif evento.button == 1: # Clique com o Botão Esquerdo
                     self._rotear_clique(evento.pos)
 
     def _rotear_clique(self, pos):
-        self.mensagem_aviso = ""
+        """
+        Direciona o clique do mouse para a função correta, baseando-se na tela atual.
+        Isso evita que o jogador clique em elementos invisíveis.
+        """
+        self.mensagem_aviso = "" # Limpa qualquer aviso antigo
         
         if self.tela_atual == "MENU":
             rect_botao_18 = pygame.Rect(300, 300, 400, 60)
@@ -144,12 +169,15 @@ class InterfaceJogo:
                 self._resetar_estado()
 
     def _processar_clique_rodando(self, pos):
+        """Lida com as interações principais do tabuleiro: mira de cartas, botão de rolar e seleção de dados."""
         estado = self.jogo.obter_estado()
 
+        # Prioridade 1: Se estiver mirando uma carta, o clique deve atingir o alvo no tabuleiro
         if self.modo_mira is not None:
             self._tentar_mira(pos, estado)
             return
 
+        # Prioridade 2: Botão Principal (Rolar Dados / Passar Vez)
         if self.rect_rolar.collidepoint(pos):
             try:
                 jogador_da_vez = estado['jogador_atual']
@@ -164,6 +192,7 @@ class InterfaceJogo:
                 self.mensagem_aviso = str(e)
             return
 
+        # Prioridade 3: Mercado de Cartas (se visível)
         jogador_da_vez = estado['jogador_atual']
         usou_carta = estado['jogadores'][jogador_da_vez]['usou_carta']
         
@@ -180,13 +209,16 @@ class InterfaceJogo:
                     self._tentar_comprar_carta(i, carta['efeito'], estado)
                     return
 
+        # Prioridade 4: Seleção dos Dados após a rolagem
         if len(self.dados_na_tela) > 0:
             for i in range(len(self.rects_dados)):
                 rect = self.rects_dados[i]
                 if rect.collidepoint(pos):
+                    # Se clicou num dado já selecionado, desmarca ele
                     if i in self.indices_selecionados:
                         self.indices_selecionados.remove(i)
                     else:
+                        # Se ainda tem vaga, seleciona o dado. Se chegou em 2, aloca no castelo automaticamente.
                         if len(self.indices_selecionados) < 2:
                             self.indices_selecionados.append(i)
                             if len(self.indices_selecionados) == 2:
@@ -194,8 +226,10 @@ class InterfaceJogo:
                     return
 
     def _tentar_mira(self, pos, estado):
+        """Interpreta os cliques durante o uso de uma carta que exige escolher Castelos ou Dados."""
         try:
             if self.modo_mira == "MARCHA_ORIGEM":
+                # Verifica colisões nos 11 castelos usando teorema de Pitágoras (distância radial)
                 for id_c, info_c in estado['castelos'].items():
                     pos_castelo = POSICOES_CASTELOS[info_c['id_local']]
                     distancia = math.hypot(pos[0] - pos_castelo[0], pos[1] - pos_castelo[1])
@@ -231,7 +265,8 @@ class InterfaceJogo:
                     if rect.collidepoint(pos):
                         jogador_da_vez = estado['jogador_atual']
                         self.jogo.executar_alteracao_dado(jogador_da_vez, self.carta_mira_indice, i)
-                        self.dados_na_tela = self.jogo.dados_atuais
+                        # Atualiza a interface com a lista de dados modificada pelo backend
+                        self.dados_na_tela = self.jogo.dados_atuais 
                         self._cancelar_mira()
                         return
                         
@@ -241,6 +276,7 @@ class InterfaceJogo:
             self.mensagem_aviso = str(e)
 
     def _tentar_comprar_carta(self, indice, efeito, estado):
+        """Avalia se a carta comprada resolve imediatamente ou se exige ativação de modo mira."""
         try:
             if efeito != 'marchar':
                 if len(self.dados_na_tela) == 0:
@@ -263,6 +299,7 @@ class InterfaceJogo:
             self.mensagem_aviso = str(e)
 
     def _tentar_alocar_tropas(self):
+        """Descobre qual dado sobrou na seleção para enviar ao backend como força da tropa."""
         idx_tropa = -1
         for i in range(3):
             if i not in self.indices_selecionados:
@@ -279,9 +316,10 @@ class InterfaceJogo:
             self._encerrar_turno()
         except ValueError as e:
             self.mensagem_aviso = str(e)
-            self.indices_selecionados.pop()
+            self.indices_selecionados.pop() # Remove a última seleção para o jogador tentar de novo
 
     def _encerrar_turno(self):
+        """Limpa as váriaveis locais para receber o turno do próximo jogador."""
         self.dados_na_tela = []
         self.indices_selecionados = []
         self._cancelar_mira()
@@ -291,11 +329,13 @@ class InterfaceJogo:
             self.tela_atual = "AUDITORIA"
 
     def _cancelar_mira(self):
+        """Aborta a ação da carta se o jogador clicar com o botão direito."""
         self.modo_mira = None
         self.origem_mira = -1
         self.carta_mira_indice = -1
 
     def _desenhar_texto_caixa(self, texto, fonte, cor_texto, pos):
+        """Função utilitária que pinta um fundo preto semi-transparente atrás das strings."""
         surf_txt = fonte.render(texto, True, cor_texto)
         rect = surf_txt.get_rect(center=pos)
         
@@ -307,6 +347,7 @@ class InterfaceJogo:
         self.tela.blit(surf_txt, rect)
 
     def _desenhar_tela(self):
+        """Direciona a renderização gráfica de acordo com a tela atual."""
         if self.assets['fundo'] is not None:
             self.tela.blit(self.assets['fundo'], (0, 0))
         else:
@@ -328,11 +369,12 @@ class InterfaceJogo:
         elif self.tela_atual == "RODANDO" or self.tela_atual == "AUDITORIA":
             estado = self.jogo.obter_estado()
             
+            # Desenha as bases físicas: Os castelos e as tropas em cima deles
             for id_c, info_c in estado['castelos'].items():
                 pos = POSICOES_CASTELOS[info_c['id_local']]
                 
                 if info_c['conquistado']:
-                    cor_borda = (200, 200, 200)
+                    cor_borda = (200, 200, 200) # Fica cinza quando a auditoria pontua o castelo
                 else:
                     cor_borda = COR_PRETA
                     
@@ -342,6 +384,7 @@ class InterfaceJogo:
                 texto_id = self.fontes['castelo'].render(str(id_c), True, COR_PRETA)
                 self.tela.blit(texto_id, texto_id.get_rect(center=pos))
                 
+                # Renderiza o meeple/círculo do Jogador 1 à esquerda do castelo
                 tropas_j1 = info_c['tropas_j1']
                 if tropas_j1 > 0:
                     pos_t1 = (pos[0] - 25, pos[1] - 25)
@@ -350,6 +393,7 @@ class InterfaceJogo:
                     texto_t1 = self.fontes['tropas'].render(str(tropas_j1), True, COR_BRANCA)
                     self.tela.blit(texto_t1, texto_t1.get_rect(center=pos_t1))
 
+                # Renderiza o meeple/círculo do Jogador 2 à direita do castelo
                 tropas_j2 = info_c['tropas_j2']
                 if tropas_j2 > 0:
                     pos_t2 = (pos[0] + 25, pos[1] - 25)
@@ -358,11 +402,13 @@ class InterfaceJogo:
                     texto_t2 = self.fontes['tropas'].render(str(tropas_j2), True, COR_BRANCA)
                     self.tela.blit(texto_t2, texto_t2.get_rect(center=pos_t2))
 
+            # Desenha um halo amarelo sobre o castelo sendo selecionado para a Marcha
             if self.origem_mira != -1:
                 id_local = estado['castelos'][self.origem_mira]['id_local']
                 pos_mira = POSICOES_CASTELOS[id_local]
                 pygame.draw.circle(self.tela, (255, 200, 0), pos_mira, 30, 4)
 
+            # Sobrepõe os elementos específicos do estado atual (Menus de baixo)
             if self.tela_atual == "RODANDO":
                 self._desenhar_hud_rodando(estado)
             else:
@@ -374,6 +420,7 @@ class InterfaceJogo:
         pygame.display.flip()
 
     def _desenhar_hud_rodando(self, estado):
+        """Pinta o nome do jogador do turno, os dados rolados e as cartas táticas."""
         if estado['jogador_atual'] == 1:
             cor_vez = COR_JOGADOR_1
         else:
@@ -382,6 +429,7 @@ class InterfaceJogo:
         texto_vez = f"Jogador {estado['jogador_atual']}"
         self._desenhar_texto_caixa(texto_vez, self.fontes['titulo'], cor_vez, (500, 40))
 
+        # --- AVALIA O STATUS PARA RENDERIZAR O BOTÃO PRINCIPAL ---
         jogador_da_vez = estado['jogador_atual']
         tropas_atuais = estado['jogadores'][jogador_da_vez]['tropas']
         
@@ -391,10 +439,10 @@ class InterfaceJogo:
             cor_texto_botao = COR_PRETA
         else:
             if len(self.dados_na_tela) == 0:
-                cor_fundo_botao = (200, 200, 200)
+                cor_fundo_botao = (200, 200, 200) # Ativo (Claridade)
                 cor_texto_botao = COR_PRETA
             else:
-                cor_fundo_botao = (150, 150, 150)
+                cor_fundo_botao = (150, 150, 150) # Inativo (Escuro)
                 cor_texto_botao = (100, 100, 100)
             pygame.draw.rect(self.tela, cor_fundo_botao, self.rect_rolar)
             txt_btn = "Rolar Dados"
@@ -404,19 +452,22 @@ class InterfaceJogo:
         texto_render = self.fontes['botao'].render(txt_btn, True, cor_texto_botao)
         self.tela.blit(texto_render, texto_render.get_rect(center=self.rect_rolar.center))
 
+        # --- RENDERIZAÇÃO DOS DADOS ---
         if len(self.dados_na_tela) > 0:
             for i in range(len(self.dados_na_tela)):
                 val = self.dados_na_tela[i]
                 rect_dado = self.rects_dados[i]
                 
+                # Tenta desenhar a imagem da face do dado
                 if self.assets['dados'][val] is not None:
                     self.tela.blit(self.assets['dados'][val], rect_dado.topleft)
                     
                     if i in self.indices_selecionados:
-                        pygame.draw.rect(self.tela, (50, 220, 50), rect_dado, 4)
+                        pygame.draw.rect(self.tela, (50, 220, 50), rect_dado, 4) # Moldura de seleção
                     else:
                         pygame.draw.rect(self.tela, COR_PRETA, rect_dado, 2)
                 else:
+                    # Desenho geométrico substituto (Fallback)
                     if i in self.indices_selecionados:
                         cor_fundo_dado = (150, 255, 150)
                     else:
@@ -427,6 +478,7 @@ class InterfaceJogo:
                     texto_num = self.fontes['dado'].render(str(val), True, COR_PRETA)
                     self.tela.blit(texto_num, texto_num.get_rect(center=rect_dado.center))
 
+        # --- RENDERIZAÇÃO DO MERCADO RETRÁTIL ---
         aba = pygame.Rect(20, 20, 120, 35)
         surf_aba = pygame.Surface(aba.size)
         surf_aba.set_alpha(220)
@@ -448,6 +500,7 @@ class InterfaceJogo:
         self.tela.blit(texto_render, texto_render.get_rect(center=aba.center))
 
         if self.mercado_expandido:
+            # Fundo que protege a leitura das cartas (Hover)
             fundo_c = pygame.Surface((300, 140))
             fundo_c.set_alpha(180)
             fundo_c.fill(COR_PRETA)
@@ -473,7 +526,7 @@ class InterfaceJogo:
                 if ativo:
                     if self.carta_mira_indice == i:
                         cor_fundo_carta = (255, 250, 200)
-                        cor_borda_carta = (255, 200, 0)
+                        cor_borda_carta = (255, 200, 0) # Destaca a carta sendo ativada
                         espessura = 4
                     else:
                         cor_fundo_carta = (250, 240, 220)
@@ -498,6 +551,7 @@ class InterfaceJogo:
                     self.tela.blit(texto_linha1, texto_linha1.get_rect(center=(r_c.centerx, r_c.centery - 10)))
                     self.tela.blit(texto_linha2, texto_linha2.get_rect(center=(r_c.centerx, r_c.centery + 10)))
 
+        # --- AVISOS CONSTANTES E NOTIFICAÇÕES ---
         mods = []
         mod_c = estado['modificador_castelo']
         if mod_c != 0:
@@ -539,6 +593,7 @@ class InterfaceJogo:
             self._desenhar_texto_caixa(self.mensagem_aviso, self.fontes['aviso'], (255, 100, 100), (500, 680))
 
     def _desenhar_hud_auditoria(self):
+        """Mostra o painel com os pontos de vitória ganhos a cada 'Próximo Castelo'."""
         pygame.draw.rect(self.tela, (200, 200, 200), (350, 630, 300, 50))
         pygame.draw.rect(self.tela, COR_PRETA, (350, 630, 300, 50), 2)
         
@@ -549,6 +604,7 @@ class InterfaceJogo:
         self._desenhar_placar(50)
 
     def _desenhar_hud_fim(self):
+        """Encerra a partida e desenha o botão de retornar ao menu."""
         pts1 = self.jogo.pontuacao_parcial[1]
         pts2 = self.jogo.pontuacao_parcial[2]
         
@@ -572,6 +628,7 @@ class InterfaceJogo:
         self.tela.blit(texto_botao, texto_botao.get_rect(center=(500, 665)))
 
     def _desenhar_placar(self, y_pos):
+        """Monta o banner retangular com a pontuação 'J1 X x Y J2'."""
         pts1 = self.jogo.pontuacao_parcial[1]
         pts2 = self.jogo.pontuacao_parcial[2]
         
