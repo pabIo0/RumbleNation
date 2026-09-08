@@ -183,10 +183,7 @@ class LogicaJogo:
         # Validações estritas de abertura/fechamento do mercado de cartas
         if t1 == self.tropas_iniciais or t2 == self.tropas_iniciais:
             raise ValueError("Mercado fechado: aguarde o 2º turno.")
-            
-        if t1 <= 3 or t2 <= 3:
-            raise ValueError("Mercado fechado: fim de jogo iminente.")
-            
+           
         if indice_mercado < 0 or indice_mercado >= len(self.mercado_aberto):
             raise ValueError("Carta indisponível no mercado.")
             
@@ -373,8 +370,6 @@ class LogicaJogo:
         
         mercado_fechado = False
         if t1 == self.tropas_iniciais or t2 == self.tropas_iniciais:
-            mercado_fechado = True
-        elif t1 <= 3 or t2 <= 3:
             mercado_fechado = True
             
         partida_fim = False

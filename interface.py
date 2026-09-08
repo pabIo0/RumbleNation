@@ -35,7 +35,7 @@ class InterfaceJogo:
         """
         pygame.init()
         self.tela = pygame.display.set_mode((1000, 700))
-        pygame.display.set_caption("Rumble Nation - IA")
+        pygame.display.set_caption("Rumble Nation")
         self.relogio = pygame.time.Clock()
         
         self.fontes = {
@@ -64,6 +64,14 @@ class InterfaceJogo:
             arquivos_carregados['fundo'] = pygame.transform.smoothscale(imagem, (1000, 700))
         else:
             arquivos_carregados['fundo'] = None
+            
+        # --- ADICIONE ESTE BLOCO AQUI ---
+        caminho_capa = "assets/capa.png"
+        if os.path.exists(caminho_capa):
+            imagem_capa = pygame.image.load(caminho_capa).convert_alpha()
+            arquivos_carregados['capa'] = pygame.transform.smoothscale(imagem_capa, (1000, 700))
+        else:
+            arquivos_carregados['capa'] = None
             
         arquivos_carregados['dados'] = {}
         for i in range(1, 7):
@@ -142,8 +150,9 @@ class InterfaceJogo:
         self.mensagem_aviso = "" # Limpa qualquer aviso antigo
         
         if self.tela_atual == "MENU":
-            rect_botao_18 = pygame.Rect(300, 300, 400, 60)
-            rect_botao_36 = pygame.Rect(300, 400, 400, 60)
+            # Coordenadas ajustadas para ficarem mais elegantes
+            rect_botao_18 = pygame.Rect(300, 520, 400, 50)
+            rect_botao_36 = pygame.Rect(300, 590, 400, 50)
             
             if rect_botao_18.collidepoint(pos):
                 self.jogo = LogicaJogo(18, seed=random.randint(1, 999999))
@@ -348,23 +357,37 @@ class InterfaceJogo:
 
     def _desenhar_tela(self):
         """Direciona a renderização gráfica de acordo com a tela atual."""
-        if self.assets['fundo'] is not None:
-            self.tela.blit(self.assets['fundo'], (0, 0))
+        
+        # --- PASSO 1: DESENHA O FUNDO CORRETO ---
+        if self.tela_atual == "MENU":
+            if self.assets.get('capa') is not None:
+                self.tela.blit(self.assets['capa'], (0, 0))
+            else:
+                self.tela.fill(COR_FUNDO)
         else:
-            self.tela.fill(COR_FUNDO)
+            if self.assets.get('fundo') is not None:
+                self.tela.blit(self.assets['fundo'], (0, 0))
+            else:
+                self.tela.fill(COR_FUNDO)
 
         if self.tela_atual == "MENU":
-            self._desenhar_texto_caixa("RUMBLE NATION", self.fontes['titulo'], COR_BRANCA, (500, 150))
+            rect_18 = pygame.Rect(300, 520, 400, 50)
+            surf_18 = pygame.Surface(rect_18.size, pygame.SRCALPHA)
+            surf_18.fill((0, 0, 0, 180)) # Preto com 180 de transparência
+            self.tela.blit(surf_18, rect_18.topleft)
+            pygame.draw.rect(self.tela, (255, 200, 50), rect_18, 1) # Borda fina dourada
             
-            pygame.draw.rect(self.tela, (200, 200, 200), (300, 300, 400, 60))
-            pygame.draw.rect(self.tela, COR_PRETA, (300, 300, 400, 60), 2)
-            texto_18 = self.fontes['botao'].render("Partida Rápida (18 Tropas)", True, COR_PRETA)
-            self.tela.blit(texto_18, texto_18.get_rect(center=(500, 330)))
+            texto_18 = self.fontes['botao'].render("Partida Rápida (18 Tropas)", True, COR_BRANCA)
+            self.tela.blit(texto_18, texto_18.get_rect(center=rect_18.center))
             
-            pygame.draw.rect(self.tela, (200, 200, 200), (300, 400, 400, 60))
-            pygame.draw.rect(self.tela, COR_PRETA, (300, 400, 400, 60), 2)
-            texto_36 = self.fontes['botao'].render("Partida Completa (36 Tropas)", True, COR_PRETA)
-            self.tela.blit(texto_36, texto_36.get_rect(center=(500, 430)))
+            rect_36 = pygame.Rect(300, 590, 400, 50)
+            surf_36 = pygame.Surface(rect_36.size, pygame.SRCALPHA)
+            surf_36.fill((0, 0, 0, 180))
+            self.tela.blit(surf_36, rect_36.topleft)
+            pygame.draw.rect(self.tela, (255, 200, 50), rect_36, 1)
+            
+            texto_36 = self.fontes['botao'].render("Partida Completa (36 Tropas)", True, COR_BRANCA)
+            self.tela.blit(texto_36, texto_36.get_rect(center=rect_36.center))
                 
         elif self.tela_atual == "RODANDO" or self.tela_atual == "AUDITORIA":
             estado = self.jogo.obter_estado()
