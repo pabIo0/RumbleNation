@@ -16,8 +16,8 @@ class Jogador:
     def __init__(self, nome, id_jogador, tropas_iniciais):
         """
         Armazena o estado individual de cada competidor.
-        :param tropas_iniciais: Quantidade de "meeples" que o jogador tem no estoque (começa em 18 ou 36).
-        :var self.medalhas: Guarda as medalhas de término (3 para quem acabar primeiro, 2 para o segundo). Serve como critério de desempate.
+        :param tropas_iniciais: Quantidade de tropas que o jogador tem no estoque (começa em 18 ou 36).
+        :var self.medalhas: Guarda as medalhas de término. Serve como critério de desempate.
         :var self.usou_carta: Booleano que garante a regra de que o jogador só pode usar 1 carta por partida inteira.
         """
         self.nome = nome
@@ -42,7 +42,7 @@ class Castelo:
         Representa um território (nó) no mapa do jogo.
         :param id_castelo: Número do castelo (2 a 12), que é o valor alvo a ser tirado nos dados.
         :param pontos_vitoria: Quanto vale este castelo no final do jogo.
-        :param vizinhos: Lista de IDs dos castelos adjacentes (usado para marcha e para a cascata final).
+        :param vizinhos: Lista de IDs dos castelos adjacentes (usado para a carta marcha e para a cascata final).
         :param id_local: O ID fixo da coordenada geográfica na interface (onde ele será desenhado na tela).
         :var self.tropas: Dicionário que rastreia quantas peças cada jogador colocou aqui {1: X, 2: Y}.
         :var self.conquistado: Booleano que muda para True durante a auditoria final após os pontos serem distribuídos.
@@ -63,7 +63,7 @@ class LogicaJogo:
     def __init__(self, tropas_iniciais=36, seed=None):
         """
         Inicializa o estado global (Environment) da partida.
-        :param seed: Permite gerar partidas determinísticas (exatamente iguais) para testar a IA.
+        :param seed: Permite gerar partidas diferentes a cada execução.
         """
         if seed is not None:
             random.seed(seed)
@@ -315,9 +315,9 @@ class LogicaJogo:
         if jogador.tropas == 0 and self.id_jogador_atual not in self.ordem_termino:
             self.ordem_termino.append(self.id_jogador_atual)
             if len(self.ordem_termino) == 1:
-                jogador.medalhas = 3
-            else:
                 jogador.medalhas = 2
+            else:
+                jogador.medalhas = 1
             
         self._limpar_modificadores_e_passar_vez()
 

@@ -65,7 +65,6 @@ class InterfaceJogo:
         else:
             arquivos_carregados['fundo'] = None
             
-        # --- ADICIONE ESTE BLOCO AQUI ---
         caminho_capa = "assets/capa.png"
         if os.path.exists(caminho_capa):
             imagem_capa = pygame.image.load(caminho_capa).convert_alpha()
@@ -155,10 +154,10 @@ class InterfaceJogo:
             rect_botao_36 = pygame.Rect(300, 590, 400, 50)
             
             if rect_botao_18.collidepoint(pos):
-                self.jogo = LogicaJogo(18, seed=random.randint(1, 999999))
+                self.jogo = LogicaJogo(18, seed=123) #random.randint(1, 999999))
                 self.tela_atual = "RODANDO"
             elif rect_botao_36.collidepoint(pos):
-                self.jogo = LogicaJogo(36, seed=random.randint(1, 999999))
+                self.jogo = LogicaJogo(36, seed=123) #random.randint(1, 999999))
                 self.tela_atual = "RODANDO"
                 
         elif self.tela_atual == "RODANDO":
