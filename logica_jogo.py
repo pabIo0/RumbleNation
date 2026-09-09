@@ -37,18 +37,16 @@ class Jogador:
         return False
 
 class Castelo:
-    def __init__(self, id_castelo, pontos_vitoria, vizinhos, id_local):
+    def __init__(self, id_castelo, vizinhos, id_local):
         """
         Representa um território (nó) no mapa do jogo.
         :param id_castelo: Número do castelo (2 a 12), que é o valor alvo a ser tirado nos dados.
-        :param pontos_vitoria: Quanto vale este castelo no final do jogo.
         :param vizinhos: Lista de IDs dos castelos adjacentes (usado para a carta marcha e para a cascata final).
         :param id_local: O ID fixo da coordenada geográfica na interface (onde ele será desenhado na tela).
         :var self.tropas: Dicionário que rastreia quantas peças cada jogador colocou aqui {1: X, 2: Y}.
         :var self.conquistado: Booleano que muda para True durante a auditoria final após os pontos serem distribuídos.
         """
         self.id_castelo = id_castelo
-        self.pontos_vitoria = pontos_vitoria
         self.vizinhos = vizinhos
         self.id_local = id_local
         self.tropas = {1: 0, 2: 0}
@@ -94,8 +92,7 @@ class LogicaJogo:
 
     def _inicializar_mercado(self):
         """
-        Cria o deck de 11 cartas originais e sorteia 3 para ficarem visíveis no mercado.
-        A variável baralho_completo é descartada após o sample.
+        Cria o deck de 11 cartas e sorteia 3 para ficarem visíveis no mercado.
         """
         baralho_completo = [
             Carta(1, "Rerrolar", "rerrolar"),
@@ -115,7 +112,7 @@ class LogicaJogo:
     def _inicializar_castelos(self):
         """
         Mistura os valores numéricos dos castelos e os espalha geograficamente pelo mapa,
-        garantindo que as conexões físicas (vizinhos) permaneçam matematicamente corretas.
+        garantindo que as conexões físicas (vizinhos) permaneçam corretas.
         """
         # Matriz fixa: O terreno X é vizinho dos terrenos contidos na lista.
         topologia = {
@@ -132,11 +129,8 @@ class LogicaJogo:
             10: [4]
         }
         
-        # Tabela de premiação fixa: O castelo de valor X vale Y Pontos de Vitória (pv)
-        pv = {2: 2, 3: 2, 4: 4, 5: 4, 6: 4, 7: 6, 8: 6, 9: 6, 10: 8, 11: 8, 12: 10}
-        
         locais = list(topologia.keys())
-        valores = list(pv.keys())
+        valores = list(range(2, 13))
         random.shuffle(valores) # Embaralha apenas os números alvo
         
         # Cria um dicionário tradutor: Terreno físico -> Número sorteado do castelo
@@ -153,7 +147,7 @@ class LogicaJogo:
             for vizinho_local in topologia[local]:
                 vizinhos.append(mapa_valores[vizinho_local])
                 
-            castelos[valor] = Castelo(valor, pv[valor], vizinhos, local)
+            castelos[valor] = Castelo(valor, vizinhos, local)
             
         return castelos
     
@@ -424,7 +418,7 @@ class LogicaJogo:
             else:
                 vencedor = 2
                 
-        self.pontuacao_parcial[vencedor] += castelo.pontos_vitoria
+        self.pontuacao_parcial[vencedor] += castelo.id_castelo
         castelo.conquistado = True
         
         # Mecânica de Cascata: Envia uma tropa bônus grátis para todos os vizinhos de numeração MAIOR
@@ -434,7 +428,7 @@ class LogicaJogo:
                 self.castelos[vizinho].adicionar_tropas(vencedor, 1)
                 cascatas.append(str(vizinho))
                 
-        msg = f"C{self.castelo_resolucao_atual}: J{vencedor} venceu (+{castelo.pontos_vitoria} pts)."
+        msg = f"C{self.castelo_resolucao_atual}: J{vencedor} venceu (+{castelo.id_castelo} pts)."
         
         if len(cascatas) > 0:
             msg += f" Cascata: {', '.join(cascatas)}"
