@@ -311,8 +311,12 @@ class ArvoreDeEstados:
         o que mostra o caminho escolhido no meio das previsões de 1 nível.
         O estado que encerrou a partida aponta para um nó "Final da Partida".
         O estado atual (onde a partida continua ao carregar o .json) fica pintado de laranja.
+        Se a partida já terminou (modo auditoria), quem fica laranja é o "Final da Partida".
         """
         id_atual = self.id_atual()
+        ultimo = self.no_atual()
+        # O último estado não tem mais jogadas possíveis: a partida acabou
+        partida_terminou = ultimo is not None and ultimo.expandido and not ultimo.filhos
         nos_do_caminho = set(self.caminho)
         arestas_do_caminho = set(zip(self.caminho, self.caminho[1:]))
         linhas = [
@@ -322,12 +326,12 @@ class ArvoreDeEstados:
         ]
 
         for no in sorted(self.nos.values(), key=lambda n: n.ordem):
-            atributos = ""
+            extras = ""
             if no.id_no in nos_do_caminho:
-                atributos += ', group="caminho"'
-            if no.id_no == id_atual:
-                atributos += ', fillcolor="orange"'  # estado atual
-            linhas.append(f'    "n{no.ordem}" [label="{_texto_dot(no.titulo)}"{atributos}];')
+                extras += ', group="caminho"'
+            if no.id_no == id_atual and not partida_terminou:
+                extras += ', fillcolor="orange"'  # estado atual: é onde a partida continua ao carregar o .json
+            linhas.append(f'    "n{no.ordem}" [label="{_texto_dot(no.titulo)}"{extras}];')
 
             for aresta in no.filhos.values():
                 filho = self.nos[aresta["id"]]
@@ -344,11 +348,10 @@ class ArvoreDeEstados:
                     estilo = " [" + ", ".join(atributos) + "]"
                 linhas.append(f'    "n{no.ordem}" -> "n{filho.ordem}"{estilo};')
 
-        # Se o último estado da partida não tem mais jogadas possíveis, ele levou ao fim do jogo.
-        # O "Final da Partida" é só um marcador no desenho: não é um estado novo na árvore.
-        ultimo = self.no_atual()
-        if ultimo is not None and ultimo.expandido and not ultimo.filhos:
-            linhas.append('    "final" [label="Final da Partida", group="caminho"];')
+        # O último estado levou ao fim do jogo. O "Final da Partida" é só um marcador no desenho
+        # (não é um estado novo na árvore) e fica laranja porque é onde o jogo está: na auditoria.
+        if partida_terminou:
+            linhas.append('    "final" [label="Final da Partida", group="caminho", fillcolor="orange"];')
             linhas.append(f'    "n{ultimo.ordem}" -> "final" [penwidth=3, weight=20];')
 
         linhas.append("}")
