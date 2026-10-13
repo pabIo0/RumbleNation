@@ -17,7 +17,7 @@ import os
 import shutil
 import subprocess
 
-ARQUIVO_ARVORE = "arvore_rumble"   # nome base dos arquivos gerados: .json, .dot e .png
+ARQUIVO_ARVORE = "arvore_rumble"
 VERSAO_FORMATO = 2
 
 
@@ -65,6 +65,7 @@ class NoArvore:
         :param estado: O dicionário COMPLETO gerado por LogicaJogo.obter_estado() (guardado normalizado).
         :param id_pai: O hash do nó em que a jogada foi feita (None na raiz).
         :param jogada: Dicionário da jogada que levou a este estado (None na raiz).
+        :var titulo: Texto da jogada que criou o nó (é o rótulo do nó no Graphviz).
         :var filhos: Arestas que saem deste nó: {chave_da_jogada: {"id": id_filho, "jogada": {...}}}.
         :var expandido: True quando a partida real chegou a este estado e o nível abaixo foi gerado.
         """
@@ -77,16 +78,14 @@ class NoArvore:
         self.filhos = {}
         self.expandido = False
 
-    @property
-    def ids_filhos(self):
-        return [aresta["id"] for aresta in self.filhos.values()]
+        if jogada is None:
+            self.titulo = "Início da Partida"
+        else:
+            self.titulo = jogada["rotulo"]
 
-    @property
-    def titulo(self):
-        """Texto curto da jogada que criou o nó (é o que aparece em negrito no Graphviz)."""
-        if self.jogada is None:
-            return "Início da partida"
-        return f"J{self.jogada['jogador']} · {self.jogada['rotulo']}"
+    def ids_filhos(self):
+        """Lista com os hashes dos nós filhos."""
+        return [aresta["id"] for aresta in self.filhos.values()]
 
     def para_dict(self):
         return {
@@ -98,13 +97,6 @@ class NoArvore:
             "filhos": self.filhos,
             "estado": self.estado,
         }
-
-    @classmethod
-    def de_dict(cls, dados):
-        no = cls(dados["estado"], dados["id_pai"], dados["jogada"], dados["profundidade"], dados["ordem"])
-        no.expandido = dados["expandido"]
-        no.filhos = dados["filhos"]
-        return no
 
 
 class ArvoreDeEstados:
@@ -128,13 +120,14 @@ class ArvoreDeEstados:
 
     # --- Consulta ------------------------------------------------------------
 
-    @property
     def id_atual(self):
-        return self.caminho[-1] if self.caminho else None
+        """Hash do nó em que a partida está agora (o último do caminho)."""
+        if not self.caminho:
+            return None
+        return self.caminho[-1]
 
-    @property
     def no_atual(self):
-        return self.nos.get(self.id_atual)
+        return self.nos.get(self.id_atual())
 
     def obter_no(self, id_no):
         """Busca rápida de um nó na memória."""
@@ -184,18 +177,18 @@ class ArvoreDeEstados:
 
     def avancar(self, chave_jogada):
         """Move o ponteiro pela aresta da jogada feita (empilha o filho no caminho)."""
-        aresta = self.no_atual.filhos.get(chave_jogada)
+        aresta = self.no_atual().filhos.get(chave_jogada)
         if aresta is None:
             raise KeyError(f"A jogada '{chave_jogada}' não sai do nó atual.")
         self.caminho.append(aresta["id"])
-        return self.no_atual
+        return self.no_atual()
 
     def voltar(self):
         """Desfaz a última jogada do caminho (desempilha). Retorna o novo nó atual, ou None na raiz."""
         if len(self.caminho) <= 1:
             return None
         self.caminho.pop()
-        return self.no_atual
+        return self.no_atual()
 
     def ir_para(self, id_no):
         """Viagem no tempo direta para qualquer nó: o caminho é refeito subindo pelos pais."""
@@ -207,7 +200,7 @@ class ArvoreDeEstados:
             caminho.append(atual)
             atual = self.nos[atual].id_pai
         self.caminho = caminho[::-1]
-        return self.no_atual
+        return self.no_atual()
 
     # --- Diagnóstico ----------------------------------------------------------
 
@@ -248,7 +241,7 @@ class ArvoreDeEstados:
                     problemas.append(f"nó {id_no[:6]}: não tem pai e não é a raiz")
             else:
                 pai = self.nos.get(no.id_pai)
-                if pai is None or id_no not in pai.ids_filhos:
+                if pai is None or id_no not in pai.ids_filhos():
                     problemas.append(f"nó {id_no[:6]}: não está entre os filhos do seu pai")
                 elif no.profundidade != pai.profundidade + 1:
                     problemas.append(f"nó {id_no[:6]}: profundidade inconsistente")
@@ -263,7 +256,7 @@ class ArvoreDeEstados:
             elif not self.nos[id_no].expandido:
                 problemas.append(f"o nó {id_no[:6]} do caminho não teve o nível abaixo gerado")
         for anterior, seguinte in zip(self.caminho, self.caminho[1:]):
-            if anterior in self.nos and seguinte not in self.nos[anterior].ids_filhos:
+            if anterior in self.nos and seguinte not in self.nos[anterior].ids_filhos():
                 problemas.append(f"caminho quebrado entre {anterior[:6]} e {seguinte[:6]}")
         return problemas
 
@@ -294,7 +287,9 @@ class ArvoreDeEstados:
 
         self.nos = {}
         for id_no, info in dados["nos"].items():
-            no = NoArvore.de_dict(info)
+            no = NoArvore(info["estado"], info["id_pai"], info["jogada"], info["profundidade"], info["ordem"])
+            no.expandido = info["expandido"]
+            no.filhos = info["filhos"]
             if no.id_no != id_no:
                 raise ValueError(f"Arquivo corrompido: o nó {id_no[:6]} não corresponde ao estado guardado.")
             self.nos[id_no] = no
@@ -306,109 +301,77 @@ class ArvoreDeEstados:
         problemas = self.validar()
         if problemas:
             raise ValueError("Árvore inconsistente no arquivo: " + problemas[0])
-        return self
 
     # --- Apresentação (Graphviz) -----------------------------------------------
 
-    def exportar_graphviz(self, caminho_arquivo=ARQUIVO_ARVORE + ".dot", resumir=None,
-                          titulo="Rumble Nation · Árvore de Estados"):
+    def exportar_graphviz(self, caminho_arquivo=ARQUIVO_ARVORE + ".dot"):
         """
-        Gera o arquivo .dot da árvore:
-          - verde: caminho da partida (jogadas realizadas), desenhado como uma coluna vertical
-            (atributo group); amarelo: estado atual;
-          - cinza: jogadas que foram feitas e depois desfeitas (voltar no tempo);
-          - tracejado: previsões de 1 nível abaixo (jogadas possíveis que não foram feitas);
-          - seta laranja tracejada: jogada que leva a um estado que já existe (repetição evitada).
-        :param resumir: Função opcional estado -> texto (ex.: LogicaJogo.resumir_estado).
+        Gera o arquivo .dot usando apenas o texto da jogada de cada nó.
+        O caminho jogado fica com setas mais grossas e alinhado em uma coluna (group),
+        o que mostra o caminho escolhido no meio das previsões de 1 nível.
+        O estado que encerrou a partida aponta para um nó "Final da Partida".
+        O estado atual (onde a partida continua ao carregar o .json) fica pintado de laranja.
         """
-        id_atual = self.id_atual
+        id_atual = self.id_atual()
         nos_do_caminho = set(self.caminho)
         arestas_do_caminho = set(zip(self.caminho, self.caminho[1:]))
-        nome = {id_no: f"n{no.ordem}" for id_no, no in self.nos.items()}
-        nos_ordenados = sorted(self.nos.values(), key=lambda no: no.ordem)
-        estat = self.estatisticas()
-
-        subtitulo = (f"{estat['nos']} estados · {estat['estados_alcancados']} alcançados pela partida · "
-                     f"{estat['estados_previstos']} previsões · {estat['jogadas_no_caminho_atual']} jogadas no caminho atual")
         linhas = [
             "digraph ArvoreRumbleNation {",
-            '    graph [rankdir=TB, fontname="Arial", fontsize=14, labelloc=t, nodesep=0.25, ranksep=0.45, pad=0.3,',
-            f'           label=<<B>{_html(titulo)}</B><BR/><FONT POINT-SIZE="10">{_html(subtitulo)}</FONT><BR/> >];',
-            '    node [shape=box, style="rounded,filled", fontname="Arial", fontsize=10, margin="0.10,0.05"];',
-            '    edge [fontname="Arial", fontsize=8, arrowsize=0.6];',
-            "",
+            "    rankdir=TB;",
+            '    node [shape=box, style=filled, fillcolor="lightyellow", fontname="Arial"];',
         ]
 
-        for no in nos_ordenados:
-            partes = [f"<B>{_html(no.titulo)}</B>"]
-            if resumir is not None:
-                for linha in resumir(no.estado).split("\n"):
-                    partes.append(f'<FONT POINT-SIZE="9">{_html(linha)}</FONT>')
-            partes.append(f'<FONT POINT-SIZE="8" COLOR="#6c757d">id {no.id_no[:6]} · nível {no.profundidade}</FONT>')
-            rotulo = "<" + "<BR/>".join(partes) + ">"
-            linhas.append(f"    {nome[no.id_no]} [label={rotulo}, {self._estilo_do_no(no, id_atual, nos_do_caminho)}];")
+        for no in sorted(self.nos.values(), key=lambda n: n.ordem):
+            atributos = ""
+            if no.id_no in nos_do_caminho:
+                atributos += ', group="caminho"'
+            if no.id_no == id_atual:
+                atributos += ', fillcolor="orange"'  # estado atual
+            linhas.append(f'    "n{no.ordem}" [label="{_texto_dot(no.titulo)}"{atributos}];')
 
-        linhas.append("")
-        for no in nos_ordenados:
-            ligados = set()
             for aresta in no.filhos.values():
-                destino = self.nos[aresta["id"]]
-                par = (no.id_no, destino.id_no)
-                repeticao = destino.id_pai != no.id_no or par in ligados
-                ligados.add(par)
+                filho = self.nos[aresta["id"]]
+                atributos = []
+                if (no.id_no, filho.id_no) in arestas_do_caminho:
+                    atributos.append("penwidth=3, weight=20")  # jogada realizada
+                if filho.id_pai != no.id_no:
+                    # A jogada leva a um estado que já existe (criado por outro caminho). A caixa de
+                    # destino mostra a jogada do outro caminho, então a seta leva o nome desta jogada.
+                    rotulo = _rotulo_com_fundo(aresta["jogada"]["rotulo"])
+                    atributos.append(f'style=dashed, constraint=false, label={rotulo}, fontname="Arial", fontsize=10')
+                estilo = ""
+                if atributos:
+                    estilo = " [" + ", ".join(atributos) + "]"
+                linhas.append(f'    "n{no.ordem}" -> "n{filho.ordem}"{estilo};')
 
-                if par in arestas_do_caminho:
-                    atributos = ['color="#2d6a4f"', "penwidth=2.6", "weight=20"]
-                elif repeticao:
-                    atributos = ['color="#e76f51"']
-                elif destino.expandido:
-                    atributos = ['color="#6c757d"', "penwidth=1.2"]
-                else:
-                    atributos = ['color="#b5bcc3"']
-                if repeticao:
-                    texto = f"J{aresta['jogada']['jogador']} · {aresta['jogada']['rotulo']}"
-                    atributos += ["style=dashed", "constraint=false", 'fontcolor="#c2410c"',
-                                  f"label=<{_html(texto)}<BR/>(estado já existente)>"]
-                linhas.append(f"    {nome[no.id_no]} -> {nome[destino.id_no]} [{', '.join(atributos)}];")
+        # Se o último estado da partida não tem mais jogadas possíveis, ele levou ao fim do jogo.
+        # O "Final da Partida" é só um marcador no desenho: não é um estado novo na árvore.
+        ultimo = self.no_atual()
+        if ultimo is not None and ultimo.expandido and not ultimo.filhos:
+            linhas.append('    "final" [label="Final da Partida", group="caminho"];')
+            linhas.append(f'    "n{ultimo.ordem}" -> "final" [penwidth=3, weight=20];')
 
-        linhas += [
-            "",
-            "    subgraph cluster_legenda {",
-            '        label=<<B>Legenda</B>>; fontsize=10; style="rounded"; color="#ced4da";',
-            '        node [fontsize=9, margin="0.08,0.03"];',
-            '        legenda_caminho [label="Jogada realizada\\n(caminho da partida)", fillcolor="#d8f3dc", color="#2d6a4f", penwidth=2];',
-            '        legenda_atual [label="Estado atual", fillcolor="#ffd166", color="#9c6500", penwidth=3];',
-            '        legenda_desfeita [label="Jogada desfeita\\n(voltou no tempo)", fillcolor="#e9ecef", color="#6c757d"];',
-            '        legenda_prevista [label="Previsão: 1 nível abaixo\\n(não jogada)", style="rounded,filled,dashed", fillcolor="#ffffff", color="#9aa0a6"];',
-            "        { rank=same; legenda_caminho; legenda_atual; legenda_desfeita; legenda_prevista; }",
-            "        legenda_caminho -> legenda_atual -> legenda_desfeita -> legenda_prevista [style=invis];",
-            "    }",
-            "}",
-        ]
+        linhas.append("}")
 
         with open(caminho_arquivo, "w", encoding="utf-8") as arquivo:
             arquivo.write("\n".join(linhas))
         return caminho_arquivo
 
-    @staticmethod
-    def _estilo_do_no(no, id_atual, nos_do_caminho):
-        if no.id_no == id_atual:
-            estilo = 'fillcolor="#ffd166", color="#9c6500", penwidth=3, group="caminho"'
-        elif no.id_no in nos_do_caminho:
-            estilo = 'fillcolor="#d8f3dc", color="#2d6a4f", penwidth=2, group="caminho"'
-        elif no.expandido:
-            estilo = 'fillcolor="#e9ecef", color="#6c757d", penwidth=1.2'
-        else:
-            estilo = 'style="rounded,filled,dashed", fillcolor="#ffffff", color="#9aa0a6", fontcolor="#495057"'
-        if no.expandido and not no.filhos:
-            estilo += ", peripheries=2"  # Estado final: não há mais jogadas possíveis
-        return estilo
+
+def _texto_dot(texto):
+    """Escapa o texto para um rótulo entre aspas do Graphviz (a quebra de linha vira \\n)."""
+    return str(texto).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
 
 
-def _html(texto):
-    """Escapa texto para os rótulos HTML do Graphviz."""
-    return (str(texto).replace("&", "&amp;").replace("<", "&lt;")
-            .replace(">", "&gt;").replace('"', "&quot;"))
+def _rotulo_com_fundo(texto):
+    """
+    Rótulo de seta com fundo branco (formato HTML do Graphviz), para o texto não se
+    misturar com as linhas que passam por baixo dele.
+    """
+    partes = []
+    for linha in str(texto).split("\n"):
+        partes.append(linha.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    return '<<TABLE BORDER="0" CELLBORDER="0" CELLPADDING="2" BGCOLOR="white"><TR><TD>' + "<BR/>".join(partes) + "</TD></TR></TABLE>>"
 
 
 def renderizar_graphviz(caminho_dot, formato="png"):
@@ -434,38 +397,25 @@ def renderizar_graphviz(caminho_dot, formato="png"):
 # =============================================================================
 
 class NavegadorDeArvore:
-    """
-    É o ÚNICO ponto por onde jogadas reais e simulações passam.
-
-    Contrato do motor (duck typing):
-        obter_estado() -> dict                  carregar_estado(estado)
-        gerar_jogadas_possiveis() -> [Jogada]   todas as ramificações do estado atual
-        simular_jogada(jogada) -> dict          estado resultante, SEM alterar o motor
-        aplicar_jogada(jogada)                  jogada real
-        explicar_jogada_invalida(jogada) -> str
-        de_estado(estado)  (classmethod)        resumir_estado(estado) -> str  (opcional)
-    Contrato da Jogada: atributo .chave (texto único entre irmãos) e método .para_dict().
-    """
-
     def __init__(self, motor, arvore=None):
+        """
+        É o ÚNICO ponto por onde jogadas reais e simulações passam.
+        :param motor: A LogicaJogo da partida. O navegador usa dela: obter_estado, carregar_estado,
+                      clonar, gerar_jogadas_possiveis, simular_jogada, aplicar_jogada e
+                      explicar_jogada_invalida.
+        :param arvore: Uma árvore já carregada do JSON (opcional). Sem ela, a árvore começa
+                       no estado atual do motor; com ela, o motor vai para o estado atual da árvore.
+        """
         self.motor = motor
         if arvore is None:
             arvore = ArvoreDeEstados(motor.obter_estado())
         else:
-            motor.carregar_estado(arvore.no_atual.estado)
+            motor.carregar_estado(arvore.no_atual().estado)
         self.arvore = arvore
-        self._expandir(arvore.id_atual)
+        self._expandir(arvore.id_atual())
 
-    @classmethod
-    def carregar(cls, caminho_json, classe_motor):
-        """Carrega uma árvore salva e posiciona o motor no estado atual que foi salvo."""
-        arvore = ArvoreDeEstados().carregar_json(caminho_json)
-        motor = classe_motor.de_estado(arvore.no_atual.estado)
-        return cls(motor, arvore)
-
-    @property
     def no_atual(self):
-        return self.arvore.no_atual
+        return self.arvore.no_atual()
 
     def jogadas_disponiveis(self):
         """Jogadas legais do estado atual (são exatamente as arestas que saem do nó atual)."""
@@ -480,7 +430,7 @@ class NavegadorDeArvore:
           4. o ponteiro segue a aresta (o nó previsto vira o nó atual; nada é criado);
           5. o novo nó atual ganha o seu nível de filhos.
         """
-        no_anterior = self.arvore.no_atual
+        no_anterior = self.arvore.no_atual()
         aresta = no_anterior.filhos.get(jogada.chave)
         if aresta is None:
             raise ValueError(self.motor.explicar_jogada_invalida(jogada))
@@ -519,7 +469,7 @@ class NavegadorDeArvore:
         no = self.arvore.obter_no(id_no)
         if no.expandido:
             return
-        rascunho = self.motor.de_estado(no.estado)
+        rascunho = self.motor.clonar(no.estado)
         for jogada in rascunho.gerar_jogadas_possiveis():
             self.arvore.adicionar_filho(id_no, jogada, rascunho.simular_jogada(jogada))
         no.expandido = True
@@ -528,7 +478,7 @@ class NavegadorDeArvore:
         """Salva <base>.json e <base>.dot; gera <base>.png se o Graphviz estiver instalado."""
         arquivos = [
             self.arvore.salvar_json(base + ".json"),
-            self.arvore.exportar_graphviz(base + ".dot", resumir=getattr(self.motor, "resumir_estado", None)),
+            self.arvore.exportar_graphviz(base + ".dot"),
         ]
         if imagem:
             caminho_imagem = renderizar_graphviz(base + ".dot", imagem)

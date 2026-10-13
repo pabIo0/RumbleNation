@@ -7,7 +7,7 @@ da interface Pygame: serve para jogar, inspecionar a árvore e viajar no tempo p
 import random
 import sys
 from logica_jogo import LogicaJogo
-from arvore import NavegadorDeArvore, ARQUIVO_ARVORE
+from arvore import ArvoreDeEstados, NavegadorDeArvore, ARQUIVO_ARVORE
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(errors="replace") # Evita erro com '→' e '·' em consoles antigos
@@ -18,7 +18,7 @@ ARQUIVO_JSON = ARQUIVO_ARVORE + ".json"
 def imprimir_tabuleiro(navegador):
     """Desenha a situação atual do jogo em formato de texto."""
     estado = navegador.motor.obter_estado()
-    no = navegador.no_atual
+    no = navegador.no_atual()
     print(f"\n{'=' * 64}")
     print(f" VEZ DO JOGADOR {estado['jogador_atual']} | nó {no.id_no[:6]} | nível {no.profundidade} ".center(64, '='))
     print(f"{'=' * 64}")
@@ -55,7 +55,7 @@ def jogar_terminal(navegador):
             return
 
         imprimir_tabuleiro(navegador)
-        print(f"Jogadas possíveis ({len(navegador.no_atual.filhos)} filhos deste nó já gravados na árvore):")
+        print(f"Jogadas possíveis ({len(navegador.no_atual().filhos)} filhos deste nó já gravados na árvore):")
         for i, jogada in enumerate(jogadas):
             texto = jogada.rotulo.replace("\n", " ")
             print(f"  [{i}] {texto}")
@@ -116,8 +116,9 @@ def salvar(navegador):
 
 def carregar_terminal():
     """Abre o JSON, lista os estados da árvore e permite a viagem no tempo."""
+    arvore = ArvoreDeEstados()
     try:
-        navegador = NavegadorDeArvore.carregar(ARQUIVO_JSON, LogicaJogo)
+        arvore.carregar_json(ARQUIVO_JSON)
     except FileNotFoundError:
         print(f"\n[ERRO] Nenhum arquivo '{ARQUIVO_JSON}' encontrado.")
         return
@@ -125,11 +126,11 @@ def carregar_terminal():
         print(f"\n[ERRO] {erro}")
         return
 
-    arvore = navegador.arvore
+    navegador = NavegadorDeArvore(LogicaJogo(estado=arvore.no_atual().estado), arvore)
     caminho = set(arvore.caminho)
     print("\n--- ESTADOS SALVOS NA ÁRVORE ---")
     for no in sorted(arvore.nos.values(), key=lambda n: n.ordem):
-        if no.id_no == arvore.id_atual: marca = ">>"
+        if no.id_no == arvore.id_atual(): marca = ">>"
         elif no.id_no in caminho: marca = "* "
         elif no.expandido: marca = "+ "
         else: marca = "  "
@@ -155,7 +156,7 @@ def partida_automatica(tropas=18, semente_partida=123, chance_de_voltar=0.15, se
     navegador = NavegadorDeArvore(LogicaJogo(tropas, seed=semente_partida))
     jogadas_feitas = 0
     while navegador.jogadas_disponiveis():
-        if navegador.no_atual.profundidade > 2 and escolhas.random() < chance_de_voltar:
+        if navegador.no_atual().profundidade > 2 and escolhas.random() < chance_de_voltar:
             navegador.voltar()
             continue
         navegador.jogar(escolhas.choice(navegador.jogadas_disponiveis()))

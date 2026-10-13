@@ -3,7 +3,7 @@ import sys
 import os
 import math
 from logica_jogo import LogicaJogo, TipoJogada, CARTA_MARCHA
-from arvore import NavegadorDeArvore, ARQUIVO_ARVORE
+from arvore import ArvoreDeEstados, NavegadorDeArvore, ARQUIVO_ARVORE
 
 # Dicionário estático: mapeia o ID do terreno (0 a 10) para suas coordenadas exatas (X, Y) na tela.
 POSICOES_CASTELOS = {
@@ -140,8 +140,7 @@ class InterfaceJogo:
         elif self.tela_atual == "AUDITORIA":
             rect_auditoria = pygame.Rect(350, 630, 300, 50)
             if rect_auditoria.collidepoint(pos):
-                terminou, msg = self.jogo.resolver_batalha_atual()
-                self.jogo.mensagem_auditoria = msg
+                terminou, msg = self.jogo.resolver_batalha_atual() # o motor guarda a mensagem sozinho
                 if terminou:
                     self.tela_atual = "FIM"
 
@@ -179,7 +178,7 @@ class InterfaceJogo:
         """Rebobina a fita: o navegador desempilha o caminho e recarrega o estado no motor."""
         if self.navegador is None or self.tela_atual == "MENU":
             return
-        jogada_desfeita = self.navegador.no_atual.titulo.split("\n")[0]
+        jogada_desfeita = self.navegador.no_atual().titulo.split("\n")[0]
         if self.navegador.voltar() is None:
             self.mensagem_aviso = "Você já está no início da partida."
             return
@@ -203,8 +202,9 @@ class InterfaceJogo:
         self.mensagem_aviso = f"{prefixo} ({extensoes})"
 
     def _carregar_arvore(self):
+        arvore = ArvoreDeEstados()
         try:
-            navegador = NavegadorDeArvore.carregar(ARQUIVO_ARVORE + ".json", LogicaJogo)
+            arvore.carregar_json(ARQUIVO_ARVORE + ".json")
         except FileNotFoundError:
             self.mensagem_aviso = f"Arquivo {ARQUIVO_ARVORE}.json não encontrado."
             return
@@ -212,12 +212,13 @@ class InterfaceJogo:
             self.mensagem_aviso = f"Não foi possível carregar: {erro}"
             return
 
-        self.navegador = navegador
-        self.jogo = navegador.motor
+        # O motor é montado direto no estado em que a partida salva parou
+        self.navegador = NavegadorDeArvore(LogicaJogo(estado=arvore.no_atual().estado), arvore)
+        self.jogo = self.navegador.motor
         self.indices_selecionados = []
         self.origem_mira = -1
         self.tela_atual = "AUDITORIA" if self.jogo.obter_estado()['fim_de_jogo'] else "RODANDO"
-        self.mensagem_aviso = f"Árvore carregada: {len(navegador.arvore.nos)} nós"
+        self.mensagem_aviso = f"Árvore carregada: {len(arvore.nos)} nós"
 
     # =========================================================================
     #  CLIQUES → JOGADAS
@@ -258,8 +259,8 @@ class InterfaceJogo:
         return False
 
     def _clique_nos_dados(self, pos, estado):
-        # --- TRAVA DE SEGURANÇA 2: O mouse ignora clique nos dados se as tropas acabarem ---
-        if estado['jogadores'][estado['jogador_atual']]['tropas'] == 0:
+        # --- TRAVA DE SEGURANÇA 2: os dados só respondem se o motor listar alguma alocação ---
+        if not any(jogada.tipo == TipoJogada.ALOCAR for jogada in self.navegador.jogadas_disponiveis()):
             return
         for i in range(len(self.rects_dados)):
             rect = self.rects_dados[i]
@@ -287,7 +288,8 @@ class InterfaceJogo:
             if id_castelo is None:
                 return
             if self.origem_mira == -1:
-                if estado['castelos'][id_castelo][f"tropas_j{estado['jogador_atual']}"] <= 0:
+                origens = [jogada.args[0] for jogada in self.navegador.jogadas_disponiveis() if jogada.tipo == TipoJogada.MARCHA]
+                if id_castelo not in origens:
                     raise ValueError("Sem tropas neste castelo.")
                 self.origem_mira = id_castelo
             elif id_castelo == self.origem_mira:
@@ -322,9 +324,12 @@ class InterfaceJogo:
     #  DESENHO
     # =========================================================================
 
-    def _desenhar_texto_caixa(self, texto, fonte, cor_texto, pos):
+    def _desenhar_texto_caixa(self, texto, fonte, cor_texto, pos, alinhar_esquerda=False):
         surf_txt = fonte.render(texto, True, cor_texto)
-        rect = surf_txt.get_rect(center=pos)
+        if alinhar_esquerda:
+            rect = surf_txt.get_rect(midleft=pos) # pos é onde o texto começa (borda esquerda)
+        else:
+            rect = surf_txt.get_rect(center=pos)
         fundo = pygame.Surface((rect.width + 16, rect.height + 8))
         fundo.set_alpha(180)
         fundo.fill(COR_PRETA)
@@ -391,17 +396,17 @@ class InterfaceJogo:
             return ""
         if pendente['efeito'] == CARTA_MARCHA:
             if self.origem_mira == -1:
-                return "Marchar: clique no castelo de ORIGEM (botão direito cancela a carta)"
-            return f"Marchar: clique no DESTINO vizinho do castelo {self.origem_mira} (direito troca a origem)"
-        return f"{pendente['nome']}: clique no dado alvo (botão direito cancela a carta)"
+                return "Marchar: clique na ORIGEM (direito cancela)"
+            return "Marchar: clique no DESTINO (direito volta)"
+        return f"{pendente['nome']}: clique no dado (direito cancela)"
 
     def _desenhar_hud_rodando(self, estado):
         jogadas = self.navegador.jogadas_disponiveis()
         tipos = {jogada.tipo for jogada in jogadas}
         pendente = estado['carta_pendente']
 
-        self._desenhar_texto_caixa(f"Estoque J1: {estado['jogadores'][1]['tropas']} tropas", self.fontes['aviso'], COR_JOGADOR_1, (130, 60))
-        self._desenhar_texto_caixa(f"Estoque J2: {estado['jogadores'][2]['tropas']} tropas", self.fontes['aviso'], COR_JOGADOR_2, (870, 60))
+        self._desenhar_texto_caixa(f"Estoque J1: {estado['jogadores'][1]['tropas']} tropas", self.fontes['aviso'], COR_JOGADOR_1, (23, 680), alinhar_esquerda=True)
+        self._desenhar_texto_caixa(f"Estoque J2: {estado['jogadores'][2]['tropas']} tropas", self.fontes['aviso'], COR_JOGADOR_2, (870, 20))
         self._desenhar_texto_caixa(f"Jogador {estado['jogador_atual']}", self.fontes['titulo'], COR_JOGADOR_1 if estado['jogador_atual']==1 else COR_JOGADOR_2, (500, 40))
 
         # O texto do botão vem das jogadas que existem no nó atual da árvore
@@ -475,7 +480,6 @@ class InterfaceJogo:
         if estado['modificador_tropas'] != 0: mods.append(f"{'+' if estado['modificador_tropas'] > 0 else ''}{estado['modificador_tropas']} Tropa")
         if mods: self._desenhar_texto_caixa(f"Modificador: {' | '.join(mods)}", self.fontes['botao'], (255, 200, 50), (500, 600))
 
-        self._desenhar_texto_caixa(f"Carta Usada: J1({'Sim' if estado['jogadores'][1]['usou_carta'] else 'Não'}) | J2({'Sim' if estado['jogadores'][2]['usou_carta'] else 'Não'})", self.fontes['aviso'], COR_BRANCA, (500, 640))
         if self.mensagem_aviso: self._desenhar_texto_caixa(self.mensagem_aviso, self.fontes['aviso'], (255, 100, 100), (500, 680))
         elif pendente: self._desenhar_texto_caixa(self._texto_instrucao(estado), self.fontes['aviso'], COR_ALVO, (500, 680))
 
@@ -484,13 +488,15 @@ class InterfaceJogo:
         pygame.draw.rect(self.tela, COR_PRETA, (350, 630, 300, 50), 2)
         txt = self.fontes['botao'].render("Próximo Castelo", True, COR_PRETA)
         self.tela.blit(txt, txt.get_rect(center=(500, 655)))
-        self._desenhar_texto_caixa(self.jogo.mensagem_auditoria, self.fontes['botao'], COR_BRANCA, (500, 580))
+        self._desenhar_texto_caixa(self.jogo.obter_estado()['mensagem_auditoria'], self.fontes['botao'], COR_BRANCA, (500, 580))
         self._desenhar_placar(50)
         if self.mensagem_aviso: self._desenhar_texto_caixa(self.mensagem_aviso, self.fontes['status'], (255, 220, 120), (500, 100))
 
     def _desenhar_hud_fim(self):
-        pts1, pts2 = self.jogo.pontuacao_parcial[1], self.jogo.pontuacao_parcial[2]
-        txt, cor = ("Vitória do Jogador 1!", COR_JOGADOR_1) if pts1 > pts2 else ("Vitória do Jogador 2!", COR_JOGADOR_2) if pts2 > pts1 else ("Empate!", COR_BRANCA)
+        vencedor = self.jogo.obter_vencedor()
+        if vencedor == 1: txt, cor = ("Vitória do Jogador 1!", COR_JOGADOR_1)
+        elif vencedor == 2: txt, cor = ("Vitória do Jogador 2!", COR_JOGADOR_2)
+        else: txt, cor = ("Empate!", COR_BRANCA)
         self._desenhar_texto_caixa(txt, self.fontes['titulo'], cor, (500, 300))
         self._desenhar_placar(380)
 
@@ -500,7 +506,8 @@ class InterfaceJogo:
         self.tela.blit(btn_txt, btn_txt.get_rect(center=(500, 665)))
 
     def _desenhar_placar(self, y_pos):
-        pts1, pts2 = self.jogo.pontuacao_parcial[1], self.jogo.pontuacao_parcial[2]
+        pontuacao = self.jogo.obter_estado()['pontuacao_parcial']
+        pts1, pts2 = pontuacao[1], pontuacao[2]
         r = pygame.Rect(0, 0, 300 if y_pos == 50 else 400, 60 if y_pos == 50 else 50)
         r.center = (500, y_pos)
         f = pygame.Surface(r.size)

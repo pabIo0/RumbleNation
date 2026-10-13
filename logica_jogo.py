@@ -1,5 +1,4 @@
 import random
-from dataclasses import dataclass, field
 
 
 # =============================================================================
@@ -25,39 +24,36 @@ CARTA_MARCHA = "marchar"                                         # pede origem e
 COMBINACOES_DE_DADOS = ((0, 1), (0, 2), (1, 2))
 
 
-@dataclass(frozen=True)
 class Jogada:
-    """
-    Uma transição da árvore (aresta pai -> filho).
-    É imutável e comparável: duas jogadas são iguais quando têm o mesmo tipo, o mesmo jogador
-    e os mesmos argumentos. O rótulo serve só para exibição e NÃO entra na comparação.
+    def __init__(self, tipo, jogador, args=(), rotulo=""):
+        """
+        Uma transição da árvore (aresta pai -> filho).
+        :param tipo: Um dos valores de TipoJogada (ex: "alocar").
+        :param jogador: Jogador que faz a jogada (1 ou 2).
+        :param args: O que muda no jogo, e não o que foi clicado:
+                         alocar -> (castelo,)          ex: (7,)
+                         carta  -> (efeito,)           ex: ("+2_castelo",)
+                         dado   -> (valor_do_dado,)    ex: (5,)
+                         marcha -> (origem, destino)   ex: (5, 8)
+                         rerrolar / passar -> ()
+                     Assim, cliques diferentes que dão o mesmo resultado viram a mesma jogada.
+        :param rotulo: Texto mostrado no Graphviz (ex: "[J1] Castelo 7\\n(Dados 3+4) | Tropa: 5").
+        :var chave: Nome da aresta na árvore, único entre os irmãos de um nó (ex: "alocar:7").
+                    Duas jogadas são a mesma jogada quando têm a mesma chave.
+        """
+        self.tipo = tipo
+        self.jogador = jogador
+        self.args = tuple(args)
+        self.rotulo = rotulo
 
-    Os argumentos são SEMÂNTICOS (o que muda no jogo), e não posicionais (qual dado foi clicado):
-        ALOCAR    -> (castelo,)           ex.: chave 'alocar:7'
-        CARTA     -> (efeito,)            ex.: chave 'carta:+2_castelo'
-        ALVO_DADO -> (valor_do_dado,)     ex.: chave 'dado:5'
-        MARCHA    -> (origem, destino)    ex.: chave 'marcha:5,8'
-        RERROLAR / PASSAR -> ()           ex.: chave 'rerrolar'
-    Assim, cliques diferentes que produzem o mesmo resultado viram a MESMA jogada.
-    """
-    tipo: str
-    jogador: int
-    args: tuple = ()
-    rotulo: str = field(default="", compare=False)
-
-    @property
-    def chave(self):
-        """Identificador da jogada entre os irmãos de um nó (é o nome da aresta na árvore)."""
-        if not self.args:
-            return self.tipo
-        return self.tipo + ":" + ",".join(str(a) for a in self.args)
+        if self.args:
+            self.chave = self.tipo + ":" + ",".join(str(arg) for arg in self.args)
+        else:
+            self.chave = self.tipo
 
     def para_dict(self):
+        """Formato da jogada dentro do JSON da árvore."""
         return {"tipo": self.tipo, "jogador": self.jogador, "args": list(self.args), "rotulo": self.rotulo}
-
-    @staticmethod
-    def de_dict(dados):
-        return Jogada(dados["tipo"], dados["jogador"], tuple(dados["args"]), dados.get("rotulo", ""))
 
 
 # =============================================================================
@@ -126,12 +122,18 @@ class Castelo:
 # =============================================================================
 
 class LogicaJogo:
-    def __init__(self, tropas_iniciais=36, seed=123):
+    def __init__(self, tropas_iniciais=36, seed=123, estado=None):
         """
         Inicializa o estado global (Environment) da partida.
         :param seed: Semente da partida. A mesma semente gera o mesmo mapa, o mesmo mercado e a mesma
                      sequência de dados. Use seed=None para sortear uma partida diferente a cada execução.
+        :param estado: Se for passado, o motor é montado a partir desse estado (vindo da árvore ou do
+                       JSON) em vez de começar uma partida nova. Nesse caso nada é sorteado.
         """
+        if estado is not None:
+            self.carregar_estado(estado)
+            return
+
         if seed is None:
             seed = random.randrange(1, 1_000_000)
         self.semente = seed
@@ -171,19 +173,15 @@ class LogicaJogo:
         # A mecânica não depende da interface: o jogo já começa rolando os dados automaticamente
         self.rolar_dados()
 
-    @classmethod
-    def de_estado(cls, estado):
+    def clonar(self, estado=None):
         """
-        Cria um motor novo a partir de um dicionário de estado (de obter_estado() ou do JSON da árvore).
-        Não sorteia nada: tudo vem do estado. É assim que a árvore simula jogadas e viaja no tempo.
+        Cria um motor totalmente independente (nenhuma lista é compartilhada).
+        Sem argumento, copia o estado atual; com um estado, o motor novo já começa nele.
+        É assim que a árvore simula jogadas sem mexer na partida de verdade.
         """
-        motor = cls.__new__(cls)
-        motor.carregar_estado(estado)
-        return motor
-
-    def clonar(self):
-        """Cópia totalmente independente do motor (nenhuma lista é compartilhada)."""
-        return type(self).de_estado(self.obter_estado())
+        if estado is None:
+            estado = self.obter_estado()
+        return LogicaJogo(estado=estado)
 
     def _inicializar_mercado(self, sorteio):
         """
@@ -495,12 +493,14 @@ class LogicaJogo:
         if jogador.tropas > 0:
             jogadas.extend(self._jogadas_de_alocacao())
             if self.rerrolagens_disponiveis > 0:
-                jogadas.append(Jogada(TipoJogada.RERROLAR, id_j, (), "Rerrolar os dados"))
+                jogadas.append(Jogada(TipoJogada.RERROLAR, id_j, (), f"[J{id_j}] Rerrolou Dados"))
 
         jogadas.extend(self._jogadas_de_carta())
 
         if self._pode_passar():
-            rotulo = "Passar a vez" if jogador.tropas == 0 else "Passar a vez (nenhum castelo válido)"
+            rotulo = f"[J{id_j}] Passou a Vez"
+            if jogador.tropas > 0:
+                rotulo += "\n(Nenhum castelo válido)"
             jogadas.append(Jogada(TipoJogada.PASSAR, id_j, (), rotulo))
 
         return jogadas
@@ -525,13 +525,8 @@ class LogicaJogo:
             castelos_vistos.add(castelo)
 
             dado_tropa = self.dados_atuais[3 - par[0] - par[1]]
-            quantidade = self._quantidade_de_tropas(dado_tropa, jogador)
-
-            texto = f"Castelo {castelo} (dados {dado_1}+{dado_2}"
-            if self.modificador_castelo:
-                texto += f" {self.modificador_castelo:+d}"
-            texto += f") · +{quantidade} tropa" + ("s" if quantidade > 1 else "")
-            jogadas.append(Jogada(TipoJogada.ALOCAR, id_j, (castelo,), texto))
+            rotulo = f"[J{id_j}] Castelo {castelo}\n(Dados {dado_1}+{dado_2}) | Tropa: {dado_tropa}"
+            jogadas.append(Jogada(TipoJogada.ALOCAR, id_j, (castelo,), rotulo))
         return jogadas
 
     def _jogadas_de_carta(self):
@@ -547,17 +542,19 @@ class LogicaJogo:
             if carta.efeito in efeitos_vistos or self._motivo_carta_sem_efeito(carta.efeito):
                 continue
             efeitos_vistos.add(carta.efeito)
-            verbo = "Usar" if carta.efeito in CARTAS_IMEDIATAS else "Ativar"
-            jogadas.append(Jogada(TipoJogada.CARTA, id_j, (carta.efeito,), f"{verbo} carta {carta.nome}"))
+            verbo = "Usou" if carta.efeito in CARTAS_IMEDIATAS else "Ativou"
+            jogadas.append(Jogada(TipoJogada.CARTA, id_j, (carta.efeito,), f"[J{id_j}] {verbo} Carta\n({carta.nome})"))
         return jogadas
 
     def _jogadas_de_alvo(self):
         id_j = self.id_jogador_atual
         pendente = self.carta_pendente
         if pendente["efeito"] == CARTA_MARCHA:
-            return [Jogada(TipoJogada.MARCHA, id_j, (origem, destino), f"Marchar: castelo {origem} → {destino}")
+            return [Jogada(TipoJogada.MARCHA, id_j, (origem, destino),
+                           f"[J{id_j}] Marchou (Carta)\n(Castelo {origem} → {destino})")
                     for origem, destino in self._alvos_de_marcha()]
-        return [Jogada(TipoJogada.ALVO_DADO, id_j, (valor,), f"{pendente['nome']}: dado {valor} → {novo}")
+        return [Jogada(TipoJogada.ALVO_DADO, id_j, (valor,),
+                       f"[J{id_j}] Alterou Dado (Carta)\n({pendente['nome']}: {valor} → {novo})")
                 for valor, novo in self._alvos_de_dado(pendente["efeito"])]
 
     def _motivo_carta_sem_efeito(self, efeito):
@@ -606,14 +603,23 @@ class LogicaJogo:
         return alvos
 
     # -------------------------------------------------------------------------
-    #  APLICAR / SIMULAR JOGADAS (o contrato usado pela árvore)
+    #  APLICAR / SIMULAR JOGADAS (usado pela árvore)
     # -------------------------------------------------------------------------
 
     def aplicar_jogada(self, jogada):
         """Executa uma Jogada no motor. É o mesmo caminho para a jogada real e para a simulação."""
-        if jogada not in self.gerar_jogadas_possiveis():
+        if not self._jogada_permitida(jogada):
             raise ValueError(self.explicar_jogada_invalida(jogada))
         self._executar(jogada)
+
+    def _jogada_permitida(self, jogada):
+        """A jogada é permitida se for do jogador da vez e estiver entre as jogadas possíveis."""
+        if jogada.jogador != self.id_jogador_atual:
+            return False
+        for possivel in self.gerar_jogadas_possiveis():
+            if possivel.chave == jogada.chave:
+                return True
+        return False
 
     def simular_jogada(self, jogada):
         """
@@ -674,9 +680,9 @@ class LogicaJogo:
 
     def obter_jogada(self, tipo, *args):
         """Devolve a Jogada legal equivalente à intenção do jogador, ou ValueError com o motivo."""
-        candidata = Jogada(tipo, self.id_jogador_atual, tuple(args))
+        candidata = Jogada(tipo, self.id_jogador_atual, args)
         for jogada in self.gerar_jogadas_possiveis():
-            if jogada == candidata:
+            if jogada.chave == candidata.chave:
                 return jogada
         raise ValueError(self.explicar_jogada_invalida(candidata))
 
@@ -805,40 +811,6 @@ class LogicaJogo:
         for idx, c_info in enumerate(estado['mercado']):
             self.mercado_aberto.append(Carta(idx, c_info['nome'], c_info['efeito']))
 
-    @staticmethod
-    def resumir_estado(estado):
-        """Resumo curto (2 linhas) de um estado, usado no Graphviz e no terminal."""
-        jogadores = estado['jogadores']
-
-        def info(id_j):
-            return jogadores[id_j] if id_j in jogadores else jogadores[str(id_j)]
-
-        if estado['fim_de_jogo']:
-            placar = LogicaJogo.calcular_placar_final(estado)
-            return f"FIM DE JOGO\nplacar final: J1 {placar[1]} × {placar[2]} J2"
-
-        linha_1 = f"vez de J{estado['jogador_atual']} · dados {' '.join(str(d) for d in estado['dados_atuais'])}"
-        linha_2 = f"estoque J1 {info(1)['tropas']} | J2 {info(2)['tropas']}"
-        extras = []
-        if estado['modificador_castelo']:
-            extras.append(f"castelo {estado['modificador_castelo']:+d}")
-        if estado['modificador_tropas']:
-            extras.append(f"tropas {estado['modificador_tropas']:+d}")
-        if estado.get('carta_pendente'):
-            extras.append(f"escolher alvo de {estado['carta_pendente']['nome']}")
-        if extras:
-            linha_2 += " · " + ", ".join(extras)
-        return linha_1 + "\n" + linha_2
-
-    @staticmethod
-    def calcular_placar_final(estado):
-        """Roda a auditoria numa cópia e devolve {1: pontos, 2: pontos} (não altera nada)."""
-        motor = LogicaJogo.de_estado(estado)
-        terminou = False
-        while not terminou:
-            terminou, _ = motor.resolver_batalha_atual()
-        return motor.pontuacao_parcial
-
     # -------------------------------------------------------------------------
     #  AUDITORIA FINAL
     # -------------------------------------------------------------------------
@@ -847,9 +819,11 @@ class LogicaJogo:
         """
         Lógica final de pontuação chamada sucessivamente ao final do jogo.
         Retorna (True, mensagem) quando tudo foi resolvido, ou (False, mensagem) se pendente.
+        A mensagem também fica guardada em self.mensagem_auditoria (aparece no obter_estado()).
         """
         if self.castelo_resolucao_atual > 12:
-            return True, "Fim do jogo."
+            self.mensagem_auditoria = "Fim do jogo."
+            return True, self.mensagem_auditoria
 
         castelo = self.castelos[self.castelo_resolucao_atual]
         t1 = castelo.tropas[1]
@@ -859,6 +833,7 @@ class LogicaJogo:
             castelo.conquistado = True
             msg = f"Castelo {self.castelo_resolucao_atual} vazio."
             self.castelo_resolucao_atual += 1
+            self.mensagem_auditoria = msg
             return False, msg
 
         vencedor = None
@@ -886,4 +861,18 @@ class LogicaJogo:
             msg += f" Cascata: {', '.join(cascatas)}"
 
         self.castelo_resolucao_atual += 1
+        self.mensagem_auditoria = msg
         return False, msg
+
+    def obter_vencedor(self):
+        """
+        Resultado da partida depois da auditoria: 1 ou 2 (jogador com mais pontos) ou 0 (empate).
+        Retorna None enquanto a auditoria ainda não terminou.
+        """
+        if self.castelo_resolucao_atual <= 12:
+            return None
+        if self.pontuacao_parcial[1] > self.pontuacao_parcial[2]:
+            return 1
+        if self.pontuacao_parcial[2] > self.pontuacao_parcial[1]:
+            return 2
+        return 0
