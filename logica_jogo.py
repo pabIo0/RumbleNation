@@ -606,9 +606,14 @@ class LogicaJogo:
     #  APLICAR / SIMULAR JOGADAS (usado pela árvore)
     # -------------------------------------------------------------------------
 
-    def aplicar_jogada(self, jogada):
-        """Executa uma Jogada no motor. É o mesmo caminho para a jogada real e para a simulação."""
-        if not self._jogada_permitida(jogada):
+    def aplicar_jogada(self, jogada, conferir=True):
+        """
+        Executa uma Jogada no motor. É o mesmo caminho para a jogada real e para a simulação.
+        :param conferir: Com False, pula a conferência de que a jogada é legal. Só a busca da IA usa
+                         isso, porque ela aplica jogadas que acabou de receber do gerar_jogadas_possiveis()
+                         deste mesmo estado (conferir de novo deixaria cada nó da busca bem mais lento).
+        """
+        if conferir and not self._jogada_permitida(jogada):
             raise ValueError(self.explicar_jogada_invalida(jogada))
         self._executar(jogada)
 
@@ -876,3 +881,16 @@ class LogicaJogo:
         if self.pontuacao_parcial[2] > self.pontuacao_parcial[1]:
             return 2
         return 0
+
+    def placar_projetado(self):
+        """
+        Placar que a auditoria daria se a partida terminasse agora: (pontos J1, pontos J2).
+        Roda a auditoria inteira (castelos 2 a 12, cascatas e desempate por medalhas) numa cópia,
+        então este motor não muda. Num estado final, é o placar real da partida.
+        É a base da heurística da IA (ia.py).
+        """
+        copia = self.clonar()
+        terminou = False
+        while not terminou:
+            terminou, _ = copia.resolver_batalha_atual()
+        return copia.pontuacao_parcial[1], copia.pontuacao_parcial[2]

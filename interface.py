@@ -2,8 +2,12 @@ import pygame
 import sys
 import os
 import math
+import queue
+import threading
 from logica_jogo import LogicaJogo, TipoJogada, CARTA_MARCHA
 from arvore import ArvoreDeEstados, NavegadorDeArvore, ARQUIVO_ARVORE
+import ia
+from ia import TipoJogador, Participante
 
 # Dicionário estático: mapeia o ID do terreno (0 a 10) para suas coordenadas exatas (X, Y) na tela.
 POSICOES_CASTELOS = {
@@ -19,12 +23,21 @@ COR_BRANCA = (255, 255, 255)
 COR_JOGADOR_1 = (255, 80, 80)
 COR_JOGADOR_2 = (80, 150, 255)
 COR_ALVO = (255, 200, 0)
+COR_DESTAQUE = (255, 200, 50)
+COR_DESATIVADO = (130, 130, 130)
+
+# Inteligência artificial
+TIPOS_DO_MENU = [TipoJogador.HUMANO, TipoJogador.MINIMAX, TipoJogador.ALFA_BETA]
+NIVEL_MAXIMO = 20
+ATRASO_IA_MS = 600 # pausa mínima entre jogadas da IA, para dar tempo de acompanhar a partida
 
 class InterfaceJogo:
     """
     Controlador Pygame. Não conhece regras nem a estrutura da árvore:
       - cada clique é traduzido pelo motor em uma Jogada (jogada_de_alocacao, jogada_de_carta, ...);
-      - toda Jogada passa por um único método, _executar_jogada(), que chama navegador.jogar();
+      - na vez de uma IA, a jogada vem de ia.escolher_jogada(), calculada numa thread para a janela
+        não travar enquanto a busca roda;
+      - toda Jogada (humana ou da IA) passa por um único método, _executar_jogada(), que chama navegador.jogar();
       - voltar, salvar e carregar também são pedidos ao navegador.
     """
     def __init__(self):
@@ -44,6 +57,9 @@ class InterfaceJogo:
         }
 
         self.assets = self._carregar_assets()
+        # Quem controla cada jogador (escolhido no menu; continua valendo entre uma partida e outra)
+        self.participantes = {1: Participante(TipoJogador.HUMANO, 3), 2: Participante(TipoJogador.ALFA_BETA, 3)}
+        self.resultados_ia = queue.Queue() # a thread da IA entrega a decisão por aqui
         self._resetar_estado()
 
     def _carregar_assets(self):
@@ -86,10 +102,15 @@ class InterfaceJogo:
             pygame.Rect(910, 540, 60, 60)
         ]
         self.rect_rolar = pygame.Rect(770, 620, 200, 50)
+        self.thread_ia = None # busca da IA em andamento
+        self.ia_pausada = False
+        self.proxima_jogada_ia = 0
+        self.tempos = ia.TemposMedios() # tempo médio de execução por algoritmo e nível (enquanto o programa está aberto)
 
     def iniciar(self):
         while True:
             self._processar_eventos()
+            self._atualizar_ia()
             self._desenhar_tela()
             self.relogio.tick(60)
 
@@ -121,18 +142,14 @@ class InterfaceJogo:
                     self._salvar_arvore()
                 elif evento.key == pygame.K_l:
                     self._carregar_arvore()
+                elif evento.key == pygame.K_SPACE:
+                    self._pausar_ou_continuar_ia()
 
     def _rotear_clique(self, pos):
         self.mensagem_aviso = ""
 
         if self.tela_atual == "MENU":
-            rect_botao_18 = pygame.Rect(300, 520, 400, 50)
-            rect_botao_36 = pygame.Rect(300, 590, 400, 50)
-
-            if rect_botao_18.collidepoint(pos):
-                self._nova_partida(18)
-            elif rect_botao_36.collidepoint(pos):
-                self._nova_partida(36)
+            self._clique_no_menu(pos)
 
         elif self.tela_atual == "RODANDO":
             self._processar_clique_rodando(pos)
@@ -154,22 +171,31 @@ class InterfaceJogo:
     # =========================================================================
 
     def _nova_partida(self, tropas):
-        """Cria o motor e a árvore juntos. A raiz já nasce com o seu nível de jogadas possíveis."""
-        self.navegador = NavegadorDeArvore(LogicaJogo(tropas))
+        """Cria o motor e a árvore juntos. A raiz já nasce com o seu nível de jogadas possíveis (e as heurísticas)."""
+        self.navegador = NavegadorDeArvore(LogicaJogo(tropas), avaliar=ia.avaliar_estado)
         self.jogo = self.navegador.motor
         self.indices_selecionados = []
         self.origem_mira = -1
         self.tela_atual = "RODANDO"
+        self._preparar_ia()
+
+    def _preparar_ia(self):
+        """Partida nova ou carregada: a IA volta a jogar depois do intervalo de sempre."""
+        self.ia_pausada = False
+        self.proxima_jogada_ia = pygame.time.get_ticks() + ATRASO_IA_MS
 
     def _executar_jogada(self, jogada):
         """
-        ÚNICO ponto por onde uma jogada real passa.
+        ÚNICO ponto por onde uma jogada real passa (de um humano ou de uma IA).
         O navegador aplica a jogada no motor, confere que o resultado é exatamente o nó que
         já estava previsto e move o ponteiro da árvore até ele. Nenhum nó é criado aqui.
         """
+        quem_jogou = self.jogo.id_jogador_atual
         self.navegador.jogar(jogada)
         self.indices_selecionados = []
         self.origem_mira = -1
+        if not self.participantes[quem_jogou].e_ia():
+            self.ia_pausada = False # um humano jogou: a IA (se estava pausada) volta a jogar
         if self.jogo.obter_estado()['fim_de_jogo']:
             self.tela_atual = "AUDITORIA"
             self._salvar_arvore(automatico=True)
@@ -187,6 +213,9 @@ class InterfaceJogo:
         if self.tela_atual == "AUDITORIA" or self.tela_atual == "FIM":
             self.tela_atual = "RODANDO"
         self.mensagem_aviso = f"Jogada desfeita: {jogada_desfeita}"
+        if self.participantes[1].e_ia() or self.participantes[2].e_ia():
+            # Sem a pausa, a IA refaria a mesma jogada na hora e não daria para voltar além dela
+            self.ia_pausada = True
 
     def _salvar_arvore(self, automatico=False):
         if self.navegador is None:
@@ -212,19 +241,104 @@ class InterfaceJogo:
             self.mensagem_aviso = f"Não foi possível carregar: {erro}"
             return
 
-        # O motor é montado direto no estado em que a partida salva parou
-        self.navegador = NavegadorDeArvore(LogicaJogo(estado=arvore.no_atual().estado), arvore)
+        # O motor é montado direto no estado em que a partida salva parou. As heurísticas de cada nó
+        # vêm prontas do arquivo (o navegador só calcula as que faltarem, numa árvore antiga).
+        self.navegador = NavegadorDeArvore(LogicaJogo(estado=arvore.no_atual().estado), arvore, avaliar=ia.avaliar_estado)
         self.jogo = self.navegador.motor
         self.indices_selecionados = []
         self.origem_mira = -1
         self.tela_atual = "AUDITORIA" if self.jogo.obter_estado()['fim_de_jogo'] else "RODANDO"
-        self.mensagem_aviso = f"Árvore carregada: {len(arvore.nos)} nós"
+        self._preparar_ia()
+        self.ia_pausada = self.participantes[1].e_ia() or self.participantes[2].e_ia() # Espaço começa
+        recalculadas = self.navegador.heuristicas_calculadas
+        origem = f"{recalculadas} heurísticas calculadas agora" if recalculadas else "heurísticas carregadas do arquivo"
+        self.mensagem_aviso = f"Árvore carregada: {len(arvore.nos)} nós, {origem}"
+
+    # =========================================================================
+    #  INTELIGÊNCIA ARTIFICIAL
+    # =========================================================================
+
+    def _vez_da_ia(self):
+        return self.jogo is not None and self.participantes[self.jogo.id_jogador_atual].e_ia()
+
+    def _pausar_ou_continuar_ia(self):
+        if self.tela_atual != "RODANDO" or not (self.participantes[1].e_ia() or self.participantes[2].e_ia()):
+            return
+        self.ia_pausada = not self.ia_pausada
+        self.mensagem_aviso = ""
+
+    def _atualizar_ia(self):
+        """
+        Chamado a cada quadro. Na vez de uma IA, dispara a busca numa thread (a janela continua
+        respondendo) e, quando a busca termina, faz a jogada escolhida pelo caminho de sempre.
+        """
+        while not self.resultados_ia.empty():
+            navegador, id_no, decisao = self.resultados_ia.get()
+            # A partida pode ter mudado enquanto a IA pensava (voltou no tempo, carregou, reiniciou)
+            if navegador is self.navegador and self.tela_atual == "RODANDO" and id_no == navegador.no_atual().id_no:
+                self._aplicar_decisao(decisao)
+
+        if self.tela_atual != "RODANDO" or self.ia_pausada or not self._vez_da_ia():
+            return
+        if (self.thread_ia is not None and self.thread_ia.is_alive()) or pygame.time.get_ticks() < self.proxima_jogada_ia:
+            return
+
+        participante = self.participantes[self.jogo.id_jogador_atual]
+        navegador = self.navegador
+        id_no = navegador.no_atual().id_no
+        motor = self.jogo.clonar() # a busca usa uma cópia: o motor ao vivo pode mudar enquanto ela roda
+
+        def buscar():
+            decisao = ia.escolher_jogada(motor, participante.tipo, participante.nivel)
+            self.resultados_ia.put((navegador, id_no, decisao))
+
+        self.thread_ia = threading.Thread(target=buscar, daemon=True)
+        self.thread_ia.start()
+
+    def _aplicar_decisao(self, decisao):
+        """Guarda a decisão no nó atual da árvore, soma o tempo dela na média e faz a jogada escolhida pela IA."""
+        self.navegador.registrar_decisao(decisao.para_dict())
+        self.tempos.registrar(decisao)
+        self._executar_jogada(decisao.jogada)
+        self.proxima_jogada_ia = pygame.time.get_ticks() + ATRASO_IA_MS
+
+    # =========================================================================
+    #  MENU: quem joga e com qual nível
+    # =========================================================================
+
+    def _controles_do_menu(self):
+        """Retângulos clicáveis do menu: {(ação, jogador, valor): Rect}."""
+        controles = {}
+        for jogador, y in ((1, 462), (2, 506)):
+            for i, tipo in enumerate(TIPOS_DO_MENU):
+                controles[("tipo", jogador, tipo)] = pygame.Rect(200 + i * 134, y, 128, 36)
+            controles[("nivel", jogador, -1)] = pygame.Rect(706, y, 36, 36)
+            controles[("nivel", jogador, +1)] = pygame.Rect(806, y, 36, 36)
+        controles[("partida", 0, 18)] = pygame.Rect(150, 568, 340, 50)
+        controles[("partida", 0, 36)] = pygame.Rect(510, 568, 340, 50)
+        return controles
+
+    def _clique_no_menu(self, pos):
+        for (acao, jogador, valor), rect in self._controles_do_menu().items():
+            if not rect.collidepoint(pos):
+                continue
+            if acao == "partida":
+                self._nova_partida(valor)
+            elif acao == "tipo":
+                self.participantes[jogador].tipo = valor
+            elif acao == "nivel" and self.participantes[jogador].e_ia():
+                novo = self.participantes[jogador].nivel + valor
+                self.participantes[jogador].nivel = max(1, min(NIVEL_MAXIMO, novo))
+            return
 
     # =========================================================================
     #  CLIQUES → JOGADAS
     # =========================================================================
 
     def _processar_clique_rodando(self, pos):
+        if self._vez_da_ia():
+            self.mensagem_aviso = "Vez da IA. Espaço pausa ou continua."
+            return
         estado = self.jogo.obter_estado()
         try:
             if estado['carta_pendente'] is not None:
@@ -304,7 +418,7 @@ class InterfaceJogo:
 
     def _clique_direito(self):
         """Limpa a seleção. Com uma carta ativada, cancela a carta (= volta 1 nó na árvore)."""
-        if self.tela_atual != "RODANDO":
+        if self.tela_atual != "RODANDO" or self._vez_da_ia():
             return
         if self.origem_mira != -1:
             self.origem_mira = -1
@@ -324,10 +438,12 @@ class InterfaceJogo:
     #  DESENHO
     # =========================================================================
 
-    def _desenhar_texto_caixa(self, texto, fonte, cor_texto, pos, alinhar_esquerda=False):
+    def _desenhar_texto_caixa(self, texto, fonte, cor_texto, pos, alinhar_esquerda=False, alinhar_direita=False):
         surf_txt = fonte.render(texto, True, cor_texto)
         if alinhar_esquerda:
             rect = surf_txt.get_rect(midleft=pos) # pos é onde o texto começa (borda esquerda)
+        elif alinhar_direita:
+            rect = surf_txt.get_rect(midright=pos) # pos é onde o texto termina (borda direita)
         else:
             rect = surf_txt.get_rect(center=pos)
         fundo = pygame.Surface((rect.width + 16, rect.height + 8))
@@ -345,16 +461,7 @@ class InterfaceJogo:
             else: self.tela.fill(COR_FUNDO)
 
         if self.tela_atual == "MENU":
-            for btn_y, txt, cmd in [(520, "Partida Rápida (18)", 18), (590, "Partida Completa (36)", 36)]:
-                rect = pygame.Rect(300, btn_y, 400, 50)
-                surf = pygame.Surface(rect.size, pygame.SRCALPHA)
-                surf.fill((0, 0, 0, 180))
-                self.tela.blit(surf, rect.topleft)
-                pygame.draw.rect(self.tela, (255, 200, 50), rect, 1)
-                t_rend = self.fontes['botao'].render(txt, True, COR_BRANCA)
-                self.tela.blit(t_rend, t_rend.get_rect(center=rect.center))
-            self._desenhar_texto_caixa("L: carregar a última árvore salva", self.fontes['status'], COR_BRANCA, (500, 668))
-            if self.mensagem_aviso: self._desenhar_texto_caixa(self.mensagem_aviso, self.fontes['aviso'], (255, 100, 100), (500, 485))
+            self._desenhar_menu()
 
         elif self.tela_atual in ["RODANDO", "AUDITORIA"]:
             estado = self.jogo.obter_estado()
@@ -390,6 +497,54 @@ class InterfaceJogo:
 
         pygame.display.flip()
 
+    def _desenhar_botao(self, rect, texto, fonte, selecionado=False, ativo=True):
+        """Botão translúcido do menu (dourado quando selecionado, cinza quando desativado)."""
+        surf = pygame.Surface(rect.size, pygame.SRCALPHA)
+        surf.fill((255, 200, 50, 235) if selecionado else (0, 0, 0, 180))
+        self.tela.blit(surf, rect.topleft)
+        pygame.draw.rect(self.tela, COR_DESTAQUE if ativo else COR_DESATIVADO, rect, 1)
+        cor = COR_PRETA if selecionado else COR_BRANCA if ativo else COR_DESATIVADO
+        t_rend = fonte.render(texto, True, cor)
+        self.tela.blit(t_rend, t_rend.get_rect(center=rect.center))
+
+    def _desenhar_menu(self):
+        """Escolha de quem joga (Humano, Minimax ou Alfa-Beta), do nível de cada IA e do tamanho da partida."""
+        controles = self._controles_do_menu()
+        painel = pygame.Surface((720, 104), pygame.SRCALPHA)
+        painel.fill((0, 0, 0, 150))
+        self.tela.blit(painel, (140, 452))
+
+        for jogador, cor, y in ((1, COR_JOGADOR_1, 480), (2, COR_JOGADOR_2, 524)):
+            participante = self.participantes[jogador]
+            t_jog = self.fontes['botao'].render(f"J{jogador}", True, cor)
+            self.tela.blit(t_jog, t_jog.get_rect(center=(172, y)))
+            for tipo in TIPOS_DO_MENU:
+                self._desenhar_botao(controles[("tipo", jogador, tipo)], ia.NOMES_TIPO[tipo], self.fontes['aviso'],
+                                     selecionado=participante.tipo == tipo)
+            ativo = participante.e_ia()
+            t_nivel = self.fontes['aviso'].render("Nível", True, COR_BRANCA if ativo else COR_DESATIVADO)
+            self.tela.blit(t_nivel, t_nivel.get_rect(midright=(698, y)))
+            self._desenhar_botao(controles[("nivel", jogador, -1)], "-", self.fontes['botao'], ativo=ativo)
+            self._desenhar_botao(controles[("nivel", jogador, +1)], "+", self.fontes['botao'], ativo=ativo)
+            t_valor = self.fontes['botao'].render(str(participante.nivel) if ativo else "-", True, COR_BRANCA if ativo else COR_DESATIVADO)
+            self.tela.blit(t_valor, t_valor.get_rect(center=(774, y)))
+
+        self._desenhar_botao(controles[("partida", 0, 18)], "Partida Rápida (18)", self.fontes['botao'])
+        self._desenhar_botao(controles[("partida", 0, 36)], "Partida Completa (36)", self.fontes['botao'])
+        self._desenhar_texto_caixa("L: carregar a última árvore salva   |   Espaço: pausar ou continuar a IA", self.fontes['status'], COR_BRANCA, (500, 674))
+        if self.mensagem_aviso: self._desenhar_texto_caixa(self.mensagem_aviso, self.fontes['aviso'], (255, 100, 100), (500, 643))
+
+    def _desenhar_info_ia(self):
+        """Linha abaixo do título 'Jogador X': o tempo médio de execução do algoritmo e nível do jogador da vez."""
+        if not self._vez_da_ia():
+            return
+        texto = self.tempos.texto(self.participantes[self.jogo.id_jogador_atual])
+        if self.ia_pausada:
+            texto += " · pausada (Espaço continua)"
+        elif self.thread_ia is not None and self.thread_ia.is_alive():
+            texto += " · pensando..."
+        self._desenhar_texto_caixa(texto, self.fontes['status'], COR_DESTAQUE, (500, 86))
+
     def _texto_instrucao(self, estado):
         pendente = estado['carta_pendente']
         if pendente is None:
@@ -407,10 +562,15 @@ class InterfaceJogo:
 
         self._desenhar_texto_caixa(f"Estoque J1: {estado['jogadores'][1]['tropas']} tropas", self.fontes['aviso'], COR_JOGADOR_1, (23, 680), alinhar_esquerda=True)
         self._desenhar_texto_caixa(f"Estoque J2: {estado['jogadores'][2]['tropas']} tropas", self.fontes['aviso'], COR_JOGADOR_2, (870, 20))
+        self._desenhar_texto_caixa(self.participantes[1].nome(), self.fontes['status'], COR_JOGADOR_1, (23, 652), alinhar_esquerda=True)
+        self._desenhar_texto_caixa(self.participantes[2].nome(), self.fontes['status'], COR_JOGADOR_2, (982, 47), alinhar_direita=True)
         self._desenhar_texto_caixa(f"Jogador {estado['jogador_atual']}", self.fontes['titulo'], COR_JOGADOR_1 if estado['jogador_atual']==1 else COR_JOGADOR_2, (500, 40))
+        self._desenhar_info_ia()
 
         # O texto do botão vem das jogadas que existem no nó atual da árvore
-        if pendente is not None:
+        if self._vez_da_ia():
+            btn_t, bg_c, txt_c = ("Vez da IA", (150, 150, 150), (90, 90, 90))
+        elif pendente is not None:
             btn_t, bg_c, txt_c = ("Escolha o alvo", (150, 150, 150), (90, 90, 90))
         elif TipoJogada.PASSAR in tipos:
             btn_t, bg_c, txt_c = ("Passar Vez", (255, 200, 50), COR_PRETA)
@@ -481,7 +641,7 @@ class InterfaceJogo:
         if mods: self._desenhar_texto_caixa(f"Modificador: {' | '.join(mods)}", self.fontes['botao'], (255, 200, 50), (500, 600))
 
         if self.mensagem_aviso: self._desenhar_texto_caixa(self.mensagem_aviso, self.fontes['aviso'], (255, 100, 100), (500, 680))
-        elif pendente: self._desenhar_texto_caixa(self._texto_instrucao(estado), self.fontes['aviso'], COR_ALVO, (500, 680))
+        elif pendente and not self._vez_da_ia(): self._desenhar_texto_caixa(self._texto_instrucao(estado), self.fontes['aviso'], COR_ALVO, (500, 680))
 
     def _desenhar_hud_auditoria(self):
         pygame.draw.rect(self.tela, (200, 200, 200), (350, 630, 300, 50))

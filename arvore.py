@@ -1,15 +1,17 @@
 """
 Árvore de Estados do Rumble Nation.
 
-    NoArvore           um estado congelado do jogo + as arestas (jogadas) que saem dele
+    NoArvore           um estado congelado do jogo + as arestas (jogadas) que saem dele,
+                       o valor da heurística desse estado e, se uma IA decidiu ali, a decisão
     ArvoreDeEstados    dicionário plano {hash_do_estado: NoArvore}, caminho da partida,
                        persistência em JSON e exportação para Graphviz (.dot)
     NavegadorDeArvore  liga o motor do jogo à árvore: gera 1 nível abaixo de cada estado
-                       alcançado, faz a jogada real SEGUIR a aresta prevista, volta no tempo,
-                       salva e carrega.
+                       alcançado (já com a heurística de cada filho), faz a jogada real SEGUIR
+                       a aresta prevista, volta no tempo, salva e carrega.
 
 As duas primeiras classes não conhecem as regras do jogo. O navegador usa o motor apenas
-pelo contrato descrito na sua docstring, então este arquivo não importa logica_jogo.py.
+pelo contrato descrito na sua docstring e recebe a heurística como uma função, então este
+arquivo não importa logica_jogo.py nem ia.py.
 """
 import hashlib
 import json
@@ -59,15 +61,18 @@ def estados_iguais(estado_a, estado_b):
 # =============================================================================
 
 class NoArvore:
-    def __init__(self, estado, id_pai=None, jogada=None, profundidade=0, ordem=0):
+    def __init__(self, estado, id_pai=None, jogada=None, profundidade=0, ordem=0, heuristica=None):
         """
         Representa um momento congelado no tempo.
         :param estado: O dicionário COMPLETO gerado por LogicaJogo.obter_estado() (guardado normalizado).
         :param id_pai: O hash do nó em que a jogada foi feita (None na raiz).
         :param jogada: Dicionário da jogada que levou a este estado (None na raiz).
+        :param heuristica: Valor da função de avaliação deste estado (positivo = bom para o J1).
         :var titulo: Texto da jogada que criou o nó (é o rótulo do nó no Graphviz).
         :var filhos: Arestas que saem deste nó: {chave_da_jogada: {"id": id_filho, "jogada": {...}}}.
         :var expandido: True quando a partida real chegou a este estado e o nível abaixo foi gerado.
+        :var decisao: Se uma IA escolheu a jogada neste estado, o resumo da busca (algoritmo, nível,
+                      valor minimax, jogada escolhida, nós visitados, tempo...). None nos outros nós.
         """
         self.estado = _normalizar(estado)
         self.id_no = gerar_hash(self.estado)
@@ -77,6 +82,8 @@ class NoArvore:
         self.ordem = ordem
         self.filhos = {}
         self.expandido = False
+        self.heuristica = heuristica
+        self.decisao = None
 
         if jogada is None:
             self.titulo = "Início da Partida"
@@ -94,16 +101,19 @@ class NoArvore:
             "id_pai": self.id_pai,
             "jogada": self.jogada,
             "expandido": self.expandido,
+            "heuristica": self.heuristica,
+            "decisao": self.decisao,
             "filhos": self.filhos,
             "estado": self.estado,
         }
 
 
 class ArvoreDeEstados:
-    def __init__(self, estado_inicial=None):
+    def __init__(self, estado_inicial=None, heuristica_inicial=None):
         """
         Gerencia o banco de dados da árvore.
         Usamos um dicionário plano (self.nos) para evitar recursão infinita ao salvar no arquivo.
+        :param heuristica_inicial: Valor da heurística do estado inicial (fica guardado na raiz).
         :var caminho: Pilha com os ids da partida real [raiz, ..., nó atual]. É o "ponteiro" de
                       navegação: voltar uma jogada = desempilhar.
         """
@@ -113,7 +123,7 @@ class ArvoreDeEstados:
         self.repeticoes_evitadas = 0
 
         if estado_inicial is not None:
-            raiz = NoArvore(estado_inicial)
+            raiz = NoArvore(estado_inicial, heuristica=heuristica_inicial)
             self.nos[raiz.id_no] = raiz
             self.id_raiz = raiz.id_no
             self.caminho = [raiz.id_no]
@@ -148,13 +158,14 @@ class ArvoreDeEstados:
 
     # --- Construção ----------------------------------------------------------
 
-    def adicionar_filho(self, id_pai, jogada, estado_filho):
+    def adicionar_filho(self, id_pai, jogada, estado_filho, heuristica=None):
         """
         Cria a aresta 'jogada' saindo de id_pai.
           - Estado inédito: cria o nó, com profundidade = pai + 1.
           - Estado que já existe em QUALQUER nível: não cria outro nó; a aresta aponta para o
             nó existente. Assim nenhum estado é inserido duas vezes.
         :param jogada: Objeto com .chave e .para_dict() (a Jogada do motor).
+        :param heuristica: Valor da heurística do estado do filho (guardado no nó criado).
         :return: (id_filho, criado)
         """
         pai = self.nos[id_pai]
@@ -165,10 +176,12 @@ class ArvoreDeEstados:
         existente = self.buscar_estado(estado_filho)
         if existente is not None:
             self.repeticoes_evitadas += 1
+            if existente.heuristica is None:
+                existente.heuristica = heuristica
             pai.filhos[jogada.chave] = {"id": existente.id_no, "jogada": dados_jogada}
             return existente.id_no, False
 
-        filho = NoArvore(estado_filho, id_pai, dados_jogada, pai.profundidade + 1, len(self.nos))
+        filho = NoArvore(estado_filho, id_pai, dados_jogada, pai.profundidade + 1, len(self.nos), heuristica)
         self.nos[filho.id_no] = filho
         pai.filhos[jogada.chave] = {"id": filho.id_no, "jogada": dados_jogada}
         return filho.id_no, True
@@ -213,6 +226,8 @@ class ArvoreDeEstados:
             "profundidade_maxima": max((no.profundidade for no in self.nos.values()), default=0),
             "jogadas_no_caminho_atual": max(len(self.caminho) - 1, 0),
             "repeticoes_evitadas": self.repeticoes_evitadas,
+            "nos_com_heuristica": sum(1 for no in self.nos.values() if no.heuristica is not None),
+            "decisoes_da_ia": sum(1 for no in self.nos.values() if no.decisao is not None),
         }
 
     def validar(self):
@@ -290,6 +305,9 @@ class ArvoreDeEstados:
             no = NoArvore(info["estado"], info["id_pai"], info["jogada"], info["profundidade"], info["ordem"])
             no.expandido = info["expandido"]
             no.filhos = info["filhos"]
+            # Heurística e decisão da IA vêm prontas do arquivo (árvores da etapa 2 não têm: ficam None)
+            no.heuristica = info.get("heuristica")
+            no.decisao = info.get("decisao")
             if no.id_no != id_no:
                 raise ValueError(f"Arquivo corrompido: o nó {id_no[:6]} não corresponde ao estado guardado.")
             self.nos[id_no] = no
@@ -306,7 +324,8 @@ class ArvoreDeEstados:
 
     def exportar_graphviz(self, caminho_arquivo=ARQUIVO_ARVORE + ".dot"):
         """
-        Gera o arquivo .dot usando apenas o texto da jogada de cada nó.
+        Gera o arquivo .dot. Cada caixa mostra o texto da jogada, o valor da heurística (h) e, nos
+        nós onde uma IA decidiu, o algoritmo, o nível e o valor minimax encontrado (v).
         O caminho jogado fica com setas mais grossas e alinhado em uma coluna (group),
         o que mostra o caminho escolhido no meio das previsões de 1 nível.
         O estado que encerrou a partida aponta para um nó "Final da Partida".
@@ -331,7 +350,7 @@ class ArvoreDeEstados:
                 extras += ', group="caminho"'
             if no.id_no == id_atual and not partida_terminou:
                 extras += ', fillcolor="orange"'  # estado atual: é onde a partida continua ao carregar o .json
-            linhas.append(f'    "n{no.ordem}" [label="{_texto_dot(no.titulo)}"{extras}];')
+            linhas.append(f'    "n{no.ordem}" [label="{_texto_dot(_texto_do_no(no))}"{extras}];')
 
             for aresta in no.filhos.values():
                 filho = self.nos[aresta["id"]]
@@ -359,6 +378,24 @@ class ArvoreDeEstados:
         with open(caminho_arquivo, "w", encoding="utf-8") as arquivo:
             arquivo.write("\n".join(linhas))
         return caminho_arquivo
+
+
+def _texto_do_no(no):
+    """Texto da caixa de um nó no .dot: a jogada, a heurística e, se uma IA decidiu ali, a decisão."""
+    linhas = [no.titulo]
+    if no.heuristica is not None:
+        linhas.append(f"h = {_com_sinal(no.heuristica)}")
+    if no.decisao is not None:
+        decisao = no.decisao
+        linhas.append(f"{decisao['algoritmo']} nível {decisao['nivel']}: v = {_com_sinal(decisao['valor'])}")
+    return "\n".join(linhas)
+
+
+def _com_sinal(numero):
+    """+5, -3 e 0 (o zero fica sem sinal)."""
+    if numero == 0:
+        return "0"
+    return f"{numero:+}"
 
 
 def _texto_dot(texto):
@@ -400,7 +437,7 @@ def renderizar_graphviz(caminho_dot, formato="png"):
 # =============================================================================
 
 class NavegadorDeArvore:
-    def __init__(self, motor, arvore=None):
+    def __init__(self, motor, arvore=None, avaliar=None):
         """
         É o ÚNICO ponto por onde jogadas reais e simulações passam.
         :param motor: A LogicaJogo da partida. O navegador usa dela: obter_estado, carregar_estado,
@@ -408,12 +445,20 @@ class NavegadorDeArvore:
                       explicar_jogada_invalida.
         :param arvore: Uma árvore já carregada do JSON (opcional). Sem ela, a árvore começa
                        no estado atual do motor; com ela, o motor vai para o estado atual da árvore.
+        :param avaliar: Função heurística f(estado) -> número (opcional; na etapa 3 é a
+                        ia.avaliar_estado). Com ela, todo nó criado já nasce com o seu valor.
+        :var heuristicas_calculadas: Quantos nós de uma árvore carregada estavam sem heurística e
+                                     precisaram ser calculados (0 numa árvore salva pela etapa 3).
         """
         self.motor = motor
+        self.avaliar = avaliar
+        self.heuristicas_calculadas = 0
         if arvore is None:
-            arvore = ArvoreDeEstados(motor.obter_estado())
+            estado = motor.obter_estado()
+            arvore = ArvoreDeEstados(estado, self._avaliar(estado))
         else:
             motor.carregar_estado(arvore.no_atual().estado)
+            self.heuristicas_calculadas = self._completar_heuristicas(arvore)
         self.arvore = arvore
         self._expandir(arvore.id_atual())
 
@@ -474,8 +519,36 @@ class NavegadorDeArvore:
             return
         rascunho = self.motor.clonar(no.estado)
         for jogada in rascunho.gerar_jogadas_possiveis():
-            self.arvore.adicionar_filho(id_no, jogada, rascunho.simular_jogada(jogada))
+            estado_filho = rascunho.simular_jogada(jogada)
+            self.arvore.adicionar_filho(id_no, jogada, estado_filho, self._avaliar(estado_filho))
         no.expandido = True
+
+    def _avaliar(self, estado):
+        """Heurística do estado, ou None se o navegador foi criado sem função de avaliação."""
+        if self.avaliar is None:
+            return None
+        return self.avaliar(estado)
+
+    def _completar_heuristicas(self, arvore):
+        """
+        Numa árvore carregada, calcula a heurística só dos nós que vieram sem ela (árvores antigas).
+        Os valores que já estavam no arquivo são usados como estão, sem recalcular.
+        """
+        if self.avaliar is None:
+            return 0
+        calculadas = 0
+        for no in arvore.nos.values():
+            if no.heuristica is None:
+                no.heuristica = self.avaliar(no.estado)
+                calculadas += 1
+        return calculadas
+
+    def registrar_decisao(self, decisao):
+        """
+        Guarda no nó atual a decisão de uma IA (dicionário da ia.Decisao.para_dict()).
+        Fica salva no JSON e aparece no .dot.
+        """
+        self.arvore.no_atual().decisao = decisao
 
     def salvar(self, base=ARQUIVO_ARVORE, imagem="png"):
         """Salva <base>.json e <base>.dot; gera <base>.png se o Graphviz estiver instalado."""
