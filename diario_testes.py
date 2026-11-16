@@ -1,8 +1,10 @@
 """
-Diário de testes da etapa 3: mede o tempo de execução do Minimax e do Alfa-Beta nível a nível, até
-descobrir o limite de viabilidade de cada um, e deixa os números prontos para o relatório.
+Diário de testes da etapa 3. São dois tipos de teste, e os dois deixam os números prontos para o relatório:
+  1. Tempo por jogada (o padrão): mede o tempo de execução do Minimax e do Alfa-Beta nível a nível, até
+     descobrir o limite de viabilidade de cada um.
+  2. Partidas IA x IA (--partidas): joga partidas completas entre duas IAs e anota o placar final.
 
-Como os testes funcionam:
+Como os testes de tempo funcionam:
   - São três posições fixas da mesma partida (36 tropas, semente 123), sempre no começo de um turno:
     início, meio e final. Como os dados são determinísticos, as posições são sempre as mesmas.
   - Cada teste é uma jogada da IA (uma busca completa) numa posição, com um algoritmo e um nível.
@@ -14,15 +16,33 @@ Como os testes funcionam:
     (calculado do nível 5 em diante), até a jogada mais lenta passar de 8 horas (inexequível).
   - Também calcula o fator de ramificação efetiva b* de cada busca (aula 4), a partir dos nós visitados.
 
+Como as partidas IA x IA funcionam:
+  - São partidas completas, com 36 tropas, da primeira jogada até a auditoria dos castelos.
+  - Alfa-Beta contra Alfa-Beta em todas as combinações dos níveis escolhidos (cada nível joga como J1 e
+    como J2), em várias sementes: 123, 124, ... Cada semente muda o mapa, o mercado e os dados.
+  - Minimax contra Minimax com níveis iguais, só na semente 123 e até o nível 8, para comparar a partida
+    inteira com a do Alfa-Beta no mesmo nível (as jogadas e o placar final têm que ser os mesmos).
+  - Cada partida anota o placar final (pontos do J1 x pontos do J2), o número de jogadas e o tempo de
+    busca de cada IA. Os placares não dependem da máquina; os tempos, sim.
+
 Rodar:  python diario_testes.py               (pergunta o limite; Enter = 60 s)
         python diario_testes.py --limite 300  (mede níveis mais altos, mas demora bem mais)
+        python diario_testes.py --teste alfabeta 14         (só um teste: Alfa-Beta nível 14 na posição do início)
+        python diario_testes.py --teste minimax 11 todas    (só esse nível, nas três posições)
+        Os testes avulsos são anotados em testes_avulsos.csv (cada execução acrescenta uma linha por teste).
+        python diario_testes.py --partidas                          (pergunta os níveis e quantas sementes)
+        python diario_testes.py --partidas 2 4 6 8 10 --sementes 3  (níveis das IAs e número de sementes)
 
-Durante um teste, Ctrl+C desiste daquele teste e passa para o próximo algoritmo ou posição.
+Durante um teste de tempo, Ctrl+C desiste daquele teste e passa para o próximo algoritmo ou posição.
+Durante uma partida, Ctrl+C interrompe a partida: dá para pular só ela ou finalizar com as que já terminaram.
 O resultado aparece na tela e fica salvo em dois arquivos, na pasta de onde o Python foi chamado:
-    resultado_testes.txt   texto, para ler e copiar para o relatório
-    resultado_testes.csv   planilha para o Excel (separador ';' e vírgula decimal), com uma tabela em segundos para gráficos
+    resultado_testes.txt     texto, para ler e copiar para o relatório
+    resultado_testes.csv     planilha para o Excel (separador ';' e vírgula decimal), com uma tabela em segundos para gráficos
+    resultado_partidas.txt   o mesmo texto, para as partidas IA x IA
+    resultado_partidas.csv   a mesma planilha, para as partidas IA x IA
 """
 import csv
+import os
 import platform
 import sys
 from datetime import datetime
@@ -35,6 +55,9 @@ if hasattr(sys.stdout, "reconfigure"):
 
 ARQUIVO_RESULTADO = "resultado_testes.txt"
 ARQUIVO_CSV = "resultado_testes.csv"
+ARQUIVO_AVULSOS = "testes_avulsos.csv"
+ARQUIVO_PARTIDAS = "resultado_partidas.txt"
+ARQUIVO_PARTIDAS_CSV = "resultado_partidas.csv"
 LIMITE_PADRAO_S = 60.0
 FAIXAS = [(1.0, "Jogável (até 1 s)"), (10.0, "Aceitável (até 10 s)"), (60.0, "Lento (até 60 s)")]
 LIMITE_INVIAVEL_S = 60.0           # acima disso a jogada é lenta demais para jogar
@@ -44,6 +67,15 @@ ALGORITMOS = (TipoJogador.MINIMAX, TipoJogador.ALFA_BETA)
 POSICOES = ("início", "meio", "final")
 MESES = ("janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto",
          "setembro", "outubro", "novembro", "dezembro")
+
+# Partidas IA x IA
+TROPAS_PARTIDAS = 36
+PRIMEIRA_SEMENTE = 123          # a mesma dos testes de tempo; as outras sementes vêm em seguida (124, 125, ...)
+NIVEIS_PARTIDAS = (2, 4, 6, 8)  # níveis das IAs quando nenhum é escolhido
+SEMENTES_PARTIDAS = 5           # número de sementes quando nenhum é escolhido
+NIVEL_MAXIMO_MINIMAX = 8        # acima disso, uma partida inteira de Minimax contra Minimax leva horas
+# Quanto o tempo da busca cresce a cada nível (medido nos testes de tempo). Só serve para pôr as partidas em ordem.
+CRESCIMENTO = {TipoJogador.MINIMAX: 4.3, TipoJogador.ALFA_BETA: 2.6}
 
 
 # =============================================================================
@@ -78,12 +110,12 @@ def nome_do_sistema():
     return sistema
 
 
-def posicoes_de_teste(tropas=36, semente=123):
+def posicoes_de_teste(tropas=36, seed=123):
     """
     Três posições fixas da mesma partida (Alfa-Beta nível 2 contra ele mesmo): o início, o meio e o final.
     :return: ({"início": (número da jogada, motor), "meio": ..., "final": ...}, total de jogadas da partida)
     """
-    motor = LogicaJogo(tropas, seed=semente)
+    motor = LogicaJogo(tropas, seed=seed)
     historico = [motor.clonar()]
     while motor.gerar_jogadas_possiveis():
         motor.aplicar_jogada(escolher_jogada(motor, TipoJogador.ALFA_BETA, 2).jogada)
@@ -291,6 +323,12 @@ def lista_de_niveis(niveis):
     return grupos[0] if len(grupos) == 1 else ", ".join(grupos[:-1]) + " e " + grupos[-1]
 
 
+def periodo(inicio, fim):
+    """'4 de novembro de 2026, das 21:43 às 00:40 do dia 5' (o dia do fim só aparece quando é outro)."""
+    texto = f"{inicio.day} de {MESES[inicio.month - 1]} de {inicio.year}, das {inicio:%H:%M} às {fim:%H:%M}"
+    return texto if fim.date() == inicio.date() else f"{texto} do dia {fim.day}"
+
+
 def tabela_texto(cabecalho, linhas):
     larguras = [max(len(str(c)) for c in coluna) for coluna in zip(cabecalho, *linhas)]
     def formatar(linha):
@@ -319,7 +357,7 @@ def montar_resultado(medidas, posicoes, limite_s, inicio, fim):
     blocos = []
 
     # Cabeçalho: o que vai na linha "Data e máquina" e na linha "Posições" do relatório
-    data = f"{inicio.day} de {MESES[inicio.month - 1]} de {inicio.year}, das {inicio:%H:%M} às {fim:%H:%M}"
+    data = periodo(inicio, fim)
     maquina = f"{nome_do_sistema()}, {nome_do_processador()}, Python {platform.python_version()}"
     textos_posicoes = []
     for i, pos in enumerate(POSICOES):
@@ -569,6 +607,24 @@ def salvar(escrever, arquivo):
         return None
 
 
+def gravar_resultado(blocos, arquivo_texto, arquivo_csv):
+    """Mostra o resultado na tela e grava o texto e a planilha."""
+    texto = para_texto(blocos)
+    print("\n" + "=" * 80 + "\n" + texto + "\n")
+
+    def escrever_texto(arquivo):
+        with open(arquivo, "w", encoding="utf-8-sig") as saida:
+            saida.write(texto + "\n")
+
+    def escrever_planilha(arquivo):
+        gravar_csv(blocos, arquivo)
+
+    for escrever, arquivo, descricao in ((escrever_texto, arquivo_texto, "Texto salvo em"),
+                                         (escrever_planilha, arquivo_csv, "Planilha salva em")):
+        salvo = salvar(escrever, arquivo)
+        print(f"{descricao} {salvo}" if salvo else f"[AVISO] Não foi possível salvar {arquivo}.")
+
+
 def ler_limite():
     if "--limite" in sys.argv:
         try:
@@ -593,22 +649,469 @@ def main():
     medidas = medir(posicoes, limite)
     fim = datetime.now()
 
-    blocos = montar_resultado(medidas, posicoes, limite, inicio, fim)
-    texto = para_texto(blocos)
-    print("\n" + "=" * 80 + "\n" + texto + "\n")
+    gravar_resultado(montar_resultado(medidas, posicoes, limite, inicio, fim), ARQUIVO_RESULTADO, ARQUIVO_CSV)
 
-    def escrever_texto(arquivo):
-        with open(arquivo, "w", encoding="utf-8-sig") as saida:
-            saida.write(texto + "\n")
 
-    def escrever_planilha(arquivo):
-        gravar_csv(blocos, arquivo)
+# =============================================================================
+#  TESTE AVULSO: um algoritmo, um nível, uma posição (ou as três)
+# =============================================================================
 
-    for escrever, arquivo, descricao in ((escrever_texto, ARQUIVO_RESULTADO, "Texto salvo em"),
-                                         (escrever_planilha, ARQUIVO_CSV, "Planilha salva em")):
-        salvo = salvar(escrever, arquivo)
-        print(f"{descricao} {salvo}" if salvo else f"[AVISO] Não foi possível salvar {arquivo}.")
+def anotar_avulso(linha):
+    """Acrescenta uma linha ao testes_avulsos.csv (cria o arquivo com o cabeçalho se ele não existir)."""
+    cabecalho = ["Data e hora", "Máquina", "Posição", "Algoritmo", "Nível", "Nós visitados", "Tempo (s)", "Tempo", "b*"]
+
+    def escrever(arquivo):
+        novo = not os.path.exists(arquivo)
+        with open(arquivo, "a", newline="", encoding="utf-8-sig" if novo else "utf-8") as saida:
+            escritor = csv.writer(saida, delimiter=";")
+            if novo:
+                escritor.writerow(cabecalho)
+            escritor.writerow(linha)
+
+    return salvar(escrever, ARQUIVO_AVULSOS)
+
+
+def teste_avulso(texto_algoritmo, texto_nivel, texto_posicao="início"):
+    algoritmos = {"minimax": TipoJogador.MINIMAX, "alfabeta": TipoJogador.ALFA_BETA, "alfa-beta": TipoJogador.ALFA_BETA}
+    posicoes_validas = {"inicio": "início", "início": "início", "meio": "meio", "final": "final", "todas": "todas"}
+    tipo = algoritmos.get(texto_algoritmo.lower())
+    posicao = posicoes_validas.get(texto_posicao.lower())
+    if tipo is None or posicao is None or not texto_nivel.isdigit() or int(texto_nivel) < 1:
+        print("Uso: python diario_testes.py --teste <minimax|alfabeta> <nível> [início|meio|final|todas]")
+        sys.exit(1)
+    nivel = int(texto_nivel)
+    maquina = f"{nome_do_sistema()}, {nome_do_processador()}, Python {platform.python_version()}"
+    print(f"Máquina: {maquina}. Ctrl+C cancela.")
+    posicoes, _ = posicoes_de_teste()
+    for pos in (POSICOES if posicao == "todas" else (posicao,)):
+        numero, motor = posicoes[pos]
+        print(f"\n{NOMES_TIPO[tipo]} nível {nivel} na posição {pos} (jogada {numero})...")
+        try:
+            decisao = escolher_jogada(motor, tipo, nivel)
+        except KeyboardInterrupt:
+            print("Teste cancelado (Ctrl+C): nada foi anotado.")
+            return
+        b = ramificacao_efetiva(decisao.nos_visitados, nivel)
+        print(f"  {formatar_inteiro(decisao.nos_visitados)} nós visitados | tempo: {formatar_tempo(decisao.tempo)} | "
+              f"b* = {virgula(b)} | faixa: {faixa(decisao.tempo)}")
+        arquivo = anotar_avulso([datetime.now().strftime("%d/%m/%Y %H:%M:%S"), maquina, pos, NOMES_TIPO[tipo], nivel,
+                                 decisao.nos_visitados, segundos_csv(decisao.tempo), formatar_tempo(decisao.tempo), virgula(b)])
+        print(f"  Anotado em {arquivo}" if arquivo else f"  [AVISO] Não foi possível anotar em {ARQUIVO_AVULSOS}.")
+
+
+# =============================================================================
+#  PARTIDAS IA x IA: partidas completas, com o placar final
+# =============================================================================
+
+class Partida:
+    """Uma partida completa entre duas IAs: quem jogou, o placar final e o tempo de busca de cada jogada."""
+    def __init__(self, semente, tipos, niveis):
+        self.semente = semente
+        self.tipos = tipos            # {1: algoritmo do J1, 2: algoritmo do J2}
+        self.niveis = niveis          # {1: nível do J1, 2: nível do J2}
+        self.tempos = {1: [], 2: []}  # segundos de busca de cada jogada, por jogador
+        self.jogadas = []             # a chave de cada jogada, na ordem (duas partidas iguais têm a mesma lista)
+        self.placar = {1: 0, 2: 0}    # pontos de cada jogador na auditoria final
+        self.hora = ""                # hora em que a partida terminou
+
+    def vencedor(self):
+        """1 ou 2 (quem fez mais pontos); 0 se empatou."""
+        if self.placar[1] == self.placar[2]:
+            return 0
+        return 1 if self.placar[1] > self.placar[2] else 2
+
+    def busca(self, jogador=None):
+        """Segundos de busca de um jogador na partida inteira (sem o jogador: dos dois juntos)."""
+        if jogador is None:
+            return sum(self.tempos[1]) + sum(self.tempos[2])
+        return sum(self.tempos[jogador])
+
+    def mais_lenta(self):
+        return max(self.tempos[1] + self.tempos[2])
+
+    def texto_placar(self):
+        return f"{self.placar[1]} x {self.placar[2]}"
+
+    def texto_vencedor(self):
+        return "empate" if self.vencedor() == 0 else f"J{self.vencedor()}"
+
+    def mesmo_nivel(self):
+        return self.tipos[1] == self.tipos[2] and self.niveis[1] == self.niveis[2]
+
+
+def jogar_partida(semente, tipos, niveis, mostrar_andamento=False):
+    """
+    Joga uma partida inteira entre duas IAs, da primeira jogada até as tropas acabarem.
+    O placar final é o da auditoria dos castelos (num estado final, o placar projetado é o placar real).
+    :param tipos: {1: algoritmo do J1, 2: algoritmo do J2}.
+    :param niveis: {1: nível do J1, 2: nível do J2}.
+    :param mostrar_andamento: Com True, escreve um ponto na tela a cada 5 jogadas.
+    """
+    partida = Partida(semente, tipos, niveis)
+    motor = LogicaJogo(TROPAS_PARTIDAS, seed=semente)
+    while motor.gerar_jogadas_possiveis():
+        jogador = motor.id_jogador_atual
+        decisao = escolher_jogada(motor, tipos[jogador], niveis[jogador])
+        partida.tempos[jogador].append(decisao.tempo)
+        partida.jogadas.append(decisao.jogada.chave)
+        motor.aplicar_jogada(decisao.jogada)
+        if mostrar_andamento and len(partida.jogadas) % 5 == 0:
+            print(".", end="", flush=True)
+    partida.placar[1], partida.placar[2] = motor.placar_projetado()
+    partida.hora = datetime.now().strftime("%H:%M:%S")
+    return partida
+
+
+def lista_de_partidas(niveis, sementes):
+    """
+    As partidas a jogar, como (semente, tipos, níveis), da mais rápida para a mais demorada:
+      - Alfa-Beta contra Alfa-Beta em todas as combinações de níveis (cada nível joga como J1 e como J2), em cada semente;
+      - Minimax contra Minimax com níveis iguais, só na primeira semente e até o nível NIVEL_MAXIMO_MINIMAX.
+    """
+    mm, ab = ALGORITMOS
+    partidas = [(semente, {1: ab, 2: ab}, {1: nivel_j1, 2: nivel_j2})
+                for semente in sementes for nivel_j1 in niveis for nivel_j2 in niveis]
+    partidas += [(sementes[0], {1: mm, 2: mm}, {1: nivel, 2: nivel}) for nivel in niveis if nivel <= NIVEL_MAXIMO_MINIMAX]
+
+    def custo(partida):
+        semente, tipos, niveis_da_partida = partida
+        return sum(CRESCIMENTO[tipos[jogador]] ** niveis_da_partida[jogador] for jogador in (1, 2)), semente
+
+    return sorted(partidas, key=custo)
+
+
+def rodar_partidas(previstas, a_cada_partida=None):
+    """
+    Joga as partidas previstas, na ordem, e devolve as que terminaram.
+    Ctrl+C interrompe a partida em andamento: dá para pular só ela ou finalizar com as que já terminaram.
+    :param a_cada_partida: Função chamada depois de cada partida, com a lista das que já terminaram.
+    """
+    terminadas = []
+    casas = len(str(len(previstas)))
+    for numero, (semente, tipos, niveis) in enumerate(previstas, start=1):
+        nomes = [f"J{jogador} {NOMES_TIPO[tipos[jogador]]} {niveis[jogador]}" for jogador in (1, 2)]
+        print(f"[{numero:>{casas}}/{len(previstas)}] semente {semente}: {nomes[0]} x {nomes[1]} ", end="", flush=True)
+        try:
+            partida = jogar_partida(semente, tipos, niveis, mostrar_andamento=True)
+        except KeyboardInterrupt:
+            try:
+                resposta = input("\n  Partida interrompida (Ctrl+C). Enter pula só esta partida; f e Enter finaliza "
+                                 "com as que já terminaram: ")
+            except (KeyboardInterrupt, EOFError):
+                resposta = "f"
+            if resposta.strip().lower().startswith("f"):
+                break
+            continue
+        terminadas.append(partida)
+        resultado = "empate" if partida.vencedor() == 0 else f"J{partida.vencedor()} venceu"
+        print(f" {partida.texto_placar()} ({resultado}) | {len(partida.jogadas)} jogadas | "
+              f"{formatar_duracao(partida.busca())} de busca")
+        if a_cada_partida:
+            a_cada_partida(terminadas)
+    return terminadas
+
+
+def lado_do_nivel_maior(partida):
+    return 1 if partida.niveis[1] > partida.niveis[2] else 2
+
+
+def resumo_do_nivel_maior(partidas):
+    """(partidas, vitórias do nível maior, empates, vitórias do nível menor, saldo médio de pontos do nível maior)."""
+    saldos = []
+    for partida in partidas:
+        maior = lado_do_nivel_maior(partida)
+        saldos.append(partida.placar[maior] - partida.placar[3 - maior])
+    return (len(saldos), sum(saldo > 0 for saldo in saldos), sum(saldo == 0 for saldo in saldos),
+            sum(saldo < 0 for saldo in saldos), sum(saldos) / len(saldos))
+
+
+def media_ou_nada(valores):
+    """A média da lista, ou None se ela estiver vazia ou não existir."""
+    return sum(valores) / len(valores) if valores else None
+
+
+def texto_das_sementes(sementes):
+    """'semente 123', 'sementes 123 e 124' ou 'sementes 123 a 127'."""
+    if len(sementes) == 1:
+        return f"semente {sementes[0]}"
+    return f"sementes {sementes[0]} {'e' if len(sementes) == 2 else 'a'} {sementes[-1]}"
+
+
+def texto_saldo(saldo):
+    """'+14,2', '-3,5' ou '0,0'."""
+    texto = virgula(abs(saldo), 1)
+    if texto == "0,0":
+        return texto
+    return ("+" if saldo > 0 else "-") + texto
+
+
+def montar_resultado_partidas(partidas, previstas, niveis, sementes, inicio, fim):
+    """Os blocos do resultado das partidas, no mesmo formato de blocos do resultado dos testes de tempo."""
+    mm, ab = ALGORITMOS
+    alfa_beta = {(p.semente, p.niveis[1], p.niveis[2]): p for p in partidas if p.tipos[1] == ab and p.tipos[2] == ab}
+    minimax = {p.niveis[1]: p for p in partidas if p.tipos[1] == mm and p.tipos[2] == mm}
+    diferentes = [p for p in alfa_beta.values() if p.niveis[1] != p.niveis[2]]
+    comparadas = [(nivel, minimax[nivel], alfa_beta[(minimax[nivel].semente, nivel, nivel)])
+                  for nivel in sorted(minimax) if (minimax[nivel].semente, nivel, nivel) in alfa_beta]
+    numero = iter(range(1, 10))  # numera as seções que existirem
+    blocos = []
+
+    # Cabeçalho: o que vai nas linhas "Data e máquina" e "Partidas" do relatório
+    maquina = f"{nome_do_sistema()}, {nome_do_processador()}, Python {platform.python_version()}"
+    texto_niveis = ("o nível " if len(niveis) == 1 else "os níveis ") + lista_de_niveis(niveis)
+    texto_sementes = ("na " if len(sementes) == 1 else "nas ") + texto_das_sementes(sementes)
+    descricao = (f"partidas completas entre duas IAs, com {TROPAS_PARTIDAS} tropas. Alfa-Beta contra Alfa-Beta com {texto_niveis}, "
+                 f"em todas as combinações (cada nível joga como J1 e como J2), {texto_sementes}. Cada semente muda o mapa, "
+                 "o mercado e os dados.")
+    if minimax:
+        descricao += f" Minimax contra Minimax com níveis iguais, só na semente {sementes[0]}, para comparar com o Alfa-Beta."
+    blocos += [("titulo", "DIÁRIO DE TESTES: PARTIDAS IA x IA"), ("vazio",),
+               ("campo", "Data e máquina", f"{periodo(inicio, fim)}; {maquina}"),
+               ("campo", "Partidas", descricao),
+               ("campo", "Placar final", "pontos do J1 x pontos do J2 na auditoria dos castelos, depois que as duas IAs "
+                                         "colocam todas as tropas. Vence quem faz mais pontos.")]
+    if len(partidas) < previstas:
+        blocos.append(("campo", "Partidas jogadas", f"{len(partidas)} das {previstas} previstas (as outras não foram jogadas até o fim)."))
+    blocos.append(("vazio",))
+
+    # Placar final de cada partida: uma tabela por semente, com o nível do J1 na linha e o do J2 na coluna
+    blocos += [("titulo", f"{next(numero)}. PLACAR FINAL DAS PARTIDAS (Alfa-Beta contra Alfa-Beta)"), ("vazio",),
+               ("linha", "Cada célula é o placar final J1 x J2 de uma partida: o nível do J1 está na linha e o do J2, na coluna."),
+               ("vazio",)]
+    for semente in sementes:
+        if any(chave[0] == semente for chave in alfa_beta):
+            linhas = [[f"J1: nível {nivel_j1}"]
+                      + [alfa_beta[(semente, nivel_j1, nivel_j2)].texto_placar() if (semente, nivel_j1, nivel_j2) in alfa_beta else "—"
+                         for nivel_j2 in niveis] for nivel_j1 in niveis]
+            blocos += [("tabela", [f"Semente {semente}"] + [f"J2: nível {nivel}" for nivel in niveis], linhas), ("vazio",)]
+
+    # Nível maior contra nível menor: as partidas entre níveis diferentes, somando as sementes
+    if diferentes:
+        cabecalho = ["Confronto", "Partidas", "Vitórias do nível maior", "Empates", "Vitórias do nível menor",
+                     "Saldo médio do nível maior"]
+        grupos = [(f"nível {menor} x nível {maior}", [p for p in diferentes if {p.niveis[1], p.niveis[2]} == {menor, maior}])
+                  for i, menor in enumerate(niveis) for maior in niveis[i + 1:]]
+        grupos.append(("Total", diferentes))
+        linhas, linhas_csv = [], []
+        for rotulo, grupo in grupos:
+            if grupo:
+                quantas, vitorias, empates, derrotas, saldo = resumo_do_nivel_maior(grupo)
+                linhas.append([rotulo, str(quantas), str(vitorias), str(empates), str(derrotas), texto_saldo(saldo)])
+                linhas_csv.append([rotulo, quantas, vitorias, empates, derrotas, virgula(saldo, 1)])
+        blocos += [("titulo", f"{next(numero)}. NÍVEL MAIOR CONTRA NÍVEL MENOR"), ("vazio",),
+                   ("linha", "As partidas entre níveis diferentes, somando as sementes. Saldo = pontos do nível maior menos "
+                             "pontos do nível menor."),
+                   ("vazio",), ("tabela", cabecalho, linhas, cabecalho, linhas_csv), ("vazio",)]
+
+    # Minimax e Alfa-Beta na partida inteira: no mesmo nível, as jogadas e o placar têm que ser os mesmos
+    if minimax:
+        cabecalho = ["Nível", "Placar final: Minimax", "Placar final: Alfa-Beta", "Mesmas jogadas", "Jogadas",
+                     "Busca da partida: Minimax", "Busca da partida: Alfa-Beta", "Redução"]
+        cabecalho_csv = cabecalho[:5] + ["Busca da partida: Minimax (s)", "Busca da partida: Alfa-Beta (s)", "Redução (%)"]
+        linhas, linhas_csv = [], []
+        for nivel in sorted(minimax):
+            do_minimax = minimax[nivel]
+            do_alfa_beta = alfa_beta.get((do_minimax.semente, nivel, nivel))
+            inicio_da_linha = [str(nivel), do_minimax.texto_placar()]
+            if do_alfa_beta is None:
+                linhas.append(inicio_da_linha + ["—", "—", str(len(do_minimax.jogadas)), formatar_duracao(do_minimax.busca()), "—", "—"])
+                linhas_csv.append(inicio_da_linha + ["", "", len(do_minimax.jogadas), segundos_csv(do_minimax.busca()), "", ""])
+                continue
+            reducao = (1 - do_alfa_beta.busca() / do_minimax.busca()) * 100
+            meio_da_linha = [do_alfa_beta.texto_placar(), "sim" if do_minimax.jogadas == do_alfa_beta.jogadas else "não"]
+            linhas.append(inicio_da_linha + meio_da_linha + [str(len(do_minimax.jogadas)), formatar_duracao(do_minimax.busca()),
+                                                             formatar_duracao(do_alfa_beta.busca()), f"{reducao:.0f}%"])
+            linhas_csv.append(inicio_da_linha + meio_da_linha + [len(do_minimax.jogadas), segundos_csv(do_minimax.busca()),
+                                                                 segundos_csv(do_alfa_beta.busca()), virgula(reducao, 1)])
+        blocos += [("titulo", f"{next(numero)}. MINIMAX E ALFA-BETA NA PARTIDA INTEIRA (níveis iguais, semente {sementes[0]})"),
+                   ("vazio",),
+                   ("linha", "Minimax contra Minimax e Alfa-Beta contra Alfa-Beta, no mesmo nível e na mesma semente. "
+                             "Busca da partida = soma do tempo de busca de todas as jogadas das duas IAs."),
+                   ("vazio",), ("tabela", cabecalho, linhas, cabecalho_csv, linhas_csv), ("vazio",)]
+
+    # Tempo de busca por jogada, juntando todas as partidas em que o algoritmo e o nível jogaram
+    tempos, primeiras, participou, com_niveis_iguais = {}, {}, {}, {}
+    for p in partidas:
+        for jogador in (1, 2):
+            tempos.setdefault((p.tipos[jogador], p.niveis[jogador]), []).extend(p.tempos[jogador])
+        primeiras.setdefault((p.tipos[1], p.niveis[1]), []).append(p.tempos[1][0])  # o J1 sempre começa
+        for chave in {(p.tipos[1], p.niveis[1]), (p.tipos[2], p.niveis[2])}:
+            participou[chave] = participou.get(chave, 0) + 1
+        if p.mesmo_nivel():
+            com_niveis_iguais.setdefault((p.tipos[1], p.niveis[1]), []).append(p.busca())
+    cabecalho = ["Algoritmo", "Nível", "Partidas", "Jogadas", "Tempo médio por jogada", "Primeira jogada da partida",
+                 "Jogada mais lenta", "Faixa da mais lenta", "Partida inteira com níveis iguais"]
+    cabecalho_csv = cabecalho[:4] + ["Tempo médio por jogada (s)", "Primeira jogada da partida (s)", "Jogada mais lenta (s)",
+                                     "Faixa da mais lenta", "Partida inteira com níveis iguais (s)"]
+    linhas, linhas_csv = [], []
+    for alg, nivel in sorted(tempos, key=lambda chave: (ALGORITMOS.index(chave[0]), chave[1])):
+        serie = tempos[(alg, nivel)]
+        media = sum(serie) / len(serie)
+        primeira = media_ou_nada(primeiras.get((alg, nivel)))
+        partida_inteira = media_ou_nada(com_niveis_iguais.get((alg, nivel)))
+        linhas.append([NOMES_TIPO[alg], str(nivel), str(participou[(alg, nivel)]), formatar_inteiro(len(serie)),
+                       formatar_tempo(media), "—" if primeira is None else formatar_tempo(primeira),
+                       formatar_tempo(max(serie)), faixa(max(serie)),
+                       "—" if partida_inteira is None else formatar_duracao(partida_inteira)])
+        linhas_csv.append([NOMES_TIPO[alg], nivel, participou[(alg, nivel)], len(serie), segundos_csv(media),
+                           "" if primeira is None else segundos_csv(primeira), segundos_csv(max(serie)), faixa(max(serie)),
+                           "" if partida_inteira is None else segundos_csv(partida_inteira)])
+    blocos += [("titulo", f"{next(numero)}. TEMPO DE BUSCA POR JOGADA NAS PARTIDAS"), ("vazio",),
+               ("linha", "Todas as jogadas de cada algoritmo e nível, em todas as partidas. Primeira jogada da partida = tempo "
+                         "médio da primeira jogada (quando esse algoritmo e nível é o J1). Partida inteira com níveis iguais = "
+                         "tempo médio de busca de uma partida em que as duas IAs usam esse algoritmo e esse nível."),
+               ("vazio",), ("tabela", cabecalho, linhas, cabecalho_csv, linhas_csv), ("vazio",)]
+
+    # Números que aparecem no texto do relatório
+    blocos += [("titulo", f"{next(numero)}. NÚMEROS PARA O TEXTO DO RELATÓRIO"), ("vazio",)]
+    quantas_de_cada = f"{len(alfa_beta)} de Alfa-Beta contra Alfa-Beta"
+    if minimax:
+        quantas_de_cada += f" e {len(minimax)} de Minimax contra Minimax"
+    blocos.append(("item", f"Partidas: {len(partidas)} partidas completas entre IAs ({quantas_de_cada}), com "
+                           f"{formatar_inteiro(sum(len(p.jogadas) for p in partidas))} jogadas e "
+                           f"{formatar_duracao(sum(p.busca() for p in partidas))} de busca no total."))
+    if diferentes:
+        quantas, vitorias, empates, _, saldo = resumo_do_nivel_maior(diferentes)
+        por_lado = []
+        for lado in (1, 2):
+            grupo = [p for p in diferentes if lado_do_nivel_maior(p) == lado]
+            if grupo:
+                por_lado.append(f"{resumo_do_nivel_maior(grupo)[1]} das {len(grupo)} em que era o J{lado}")
+        blocos.append(("item", f"Nível maior contra nível menor: o nível maior venceu {vitorias} das {quantas} partidas "
+                               f"({vitorias / quantas * 100:.0f}%){f' e empatou {empates}' if empates else ''}, com saldo médio "
+                               f"de {texto_saldo(saldo)} pontos. Venceu {' e '.join(por_lado)}."))
+        extremos = [p for p in diferentes if {p.niveis[1], p.niveis[2]} == {niveis[0], niveis[-1]}]
+        if extremos and len(niveis) > 2:
+            quantas, vitorias, _, _, saldo = resumo_do_nivel_maior(extremos)
+            blocos.append(("item", f"Maior diferença de nível: contra o nível {niveis[0]}, o nível {niveis[-1]} venceu {vitorias} "
+                                   f"das {quantas} partidas, com saldo médio de {texto_saldo(saldo)} pontos."))
+    iguais = [p for p in alfa_beta.values() if p.mesmo_nivel()]
+    if iguais:
+        vitorias = {resultado: sum(p.vencedor() == resultado for p in iguais) for resultado in (0, 1, 2)}
+        blocos.append(("item", f"Níveis iguais: nas {len(iguais)} partidas em que as duas IAs têm o mesmo nível, o J1 venceu "
+                               f"{vitorias[1]} e o J2, {vitorias[2]}{f' ({vitorias[0]} empates)' if vitorias[0] else ''}."))
+    if comparadas:
+        diferem = [nivel for nivel, do_minimax, do_alfa_beta in comparadas
+                   if do_minimax.jogadas != do_alfa_beta.jogadas or do_minimax.placar != do_alfa_beta.placar]
+        nos_niveis = ("no nível " if len(comparadas) == 1 else "nos níveis ") + lista_de_niveis([nivel for nivel, _, _ in comparadas])
+        if diferem:
+            texto = (f"ATENÇÃO: {nos_niveis}, o Minimax e o Alfa-Beta deveriam jogar a mesma partida, mas as jogadas ou o placar "
+                     f"foram diferentes ({'nível' if len(diferem) == 1 else 'níveis'} {lista_de_niveis(diferem)}).")
+        else:
+            texto = (f"{nos_niveis}, o Minimax e o Alfa-Beta jogaram exatamente a mesma partida (as mesmas jogadas e o mesmo "
+                     "placar final).")
+        nivel, do_minimax, do_alfa_beta = comparadas[-1]
+        reducao = (1 - do_alfa_beta.busca() / do_minimax.busca()) * 100
+        blocos.append(("item", f"Minimax e Alfa-Beta: {texto} No nível {nivel}, a partida inteira levou "
+                               f"{formatar_duracao(do_minimax.busca())} de busca com o Minimax e "
+                               f"{formatar_duracao(do_alfa_beta.busca())} com o Alfa-Beta (redução de {reducao:.0f}%)."))
+    if (ab, niveis[-1]) in tempos:
+        serie = tempos[(ab, niveis[-1])]
+        texto = f"Tempo: no nível {niveis[-1]}, o Alfa-Beta levou em média {formatar_tempo(sum(serie) / len(serie))} por jogada"
+        primeira = media_ou_nada(primeiras.get((ab, niveis[-1])))
+        if primeira:
+            texto += (f"; a primeira jogada da partida levou em média {formatar_tempo(primeira)} e a jogada mais lenta, "
+                      f"{formatar_tempo(max(serie))} ({virgula(max(serie) / primeira, 1)} vezes mais)")
+        else:
+            texto += f", e a jogada mais lenta levou {formatar_tempo(max(serie))}"
+        partida_inteira = media_ou_nada(com_niveis_iguais.get((ab, niveis[-1])))
+        if partida_inteira:
+            texto += f". Uma partida inteira entre duas IAs desse nível levou em média {formatar_duracao(partida_inteira)} de busca"
+        blocos.append(("item", texto + "."))
+    referencia = alfa_beta.get((PRIMEIRA_SEMENTE, 2, 2))
+    if referencia:
+        blocos.append(("item", "Partida dos testes de tempo: a partida de onde saem as três posições de teste (Alfa-Beta 2 contra "
+                               f"Alfa-Beta 2, semente {PRIMEIRA_SEMENTE}) terminou {referencia.texto_placar()}, em "
+                               f"{len(referencia.jogadas)} jogadas."))
+
+    # Registro de cada partida (para conferir; não precisa ir para o relatório)
+    def nome_da_ia(p, jogador):
+        return f"{NOMES_TIPO[p.tipos[jogador]]} {p.niveis[jogador]}"
+
+    blocos += [("vazio",), ("titulo", f"{next(numero)}. REGISTRO DAS PARTIDAS (para conferir)"), ("vazio",),
+               ("tabela", ["Hora", "Semente", "J1", "J2", "Placar final", "Vencedor", "Jogadas", "Busca do J1", "Busca do J2",
+                           "Jogada mais lenta"],
+                [[p.hora, str(p.semente), nome_da_ia(p, 1), nome_da_ia(p, 2), p.texto_placar(), p.texto_vencedor(),
+                  str(len(p.jogadas)), formatar_duracao(p.busca(1)), formatar_duracao(p.busca(2)), formatar_tempo(p.mais_lenta())]
+                 for p in partidas],
+                ["Hora", "Semente", "J1: algoritmo", "J1: nível", "J2: algoritmo", "J2: nível", "Pontos do J1", "Pontos do J2",
+                 "Vencedor", "Jogadas", "Busca do J1 (s)", "Busca do J2 (s)", "Jogada mais lenta (s)"],
+                [[p.hora, p.semente, NOMES_TIPO[p.tipos[1]], p.niveis[1], NOMES_TIPO[p.tipos[2]], p.niveis[2], p.placar[1],
+                  p.placar[2], p.texto_vencedor(), len(p.jogadas), segundos_csv(p.busca(1)), segundos_csv(p.busca(2)),
+                  segundos_csv(p.mais_lenta())] for p in partidas])]
+    return blocos
+
+
+def ler_niveis_e_sementes():
+    """(níveis das IAs, número de sementes): vêm da linha de comando ou, se não vierem, de duas perguntas."""
+    uso = "Uso: python diario_testes.py --partidas [níveis] [--sementes N]   (ex.: --partidas 2 4 6 8 10 --sementes 3)"
+    textos = []
+    for argumento in sys.argv[sys.argv.index("--partidas") + 1:]:
+        if not argumento.isdigit():
+            break
+        textos.append(argumento)
+    quantidade = None
+    if "--sementes" in sys.argv:
+        try:
+            quantidade = int(sys.argv[sys.argv.index("--sementes") + 1])
+        except (IndexError, ValueError):
+            quantidade = 0
+    if not textos and quantidade is None:
+        padrao = " ".join(str(nivel) for nivel in NIVEIS_PARTIDAS)
+        textos = input(f"Níveis das IAs, separados por espaço (Enter = {padrao}): ").replace(",", " ").split()
+        resposta = input(f"Quantas sementes, ou seja, partidas diferentes por confronto (Enter = {SEMENTES_PARTIDAS}): ").strip()
+        quantidade = int(resposta) if resposta.isdigit() else SEMENTES_PARTIDAS
+    if quantidade is None:
+        quantidade = SEMENTES_PARTIDAS
+    try:
+        niveis = sorted(set(int(texto) for texto in textos)) if textos else list(NIVEIS_PARTIDAS)
+    except ValueError:
+        niveis = []
+    if not niveis or niveis[0] < 1 or niveis[-1] > NIVEL_MAXIMO or quantidade < 1:
+        print(uso)
+        print(f"Os níveis vão de 1 a {NIVEL_MAXIMO} e é preciso pelo menos uma semente.")
+        sys.exit(1)
+    return niveis, quantidade
+
+
+def main_partidas():
+    niveis, quantidade = ler_niveis_e_sementes()
+    sementes = list(range(PRIMEIRA_SEMENTE, PRIMEIRA_SEMENTE + quantidade))
+    previstas = lista_de_partidas(niveis, sementes)
+    print(f"\n=== PARTIDAS IA x IA: {'nível' if len(niveis) == 1 else 'níveis'} {lista_de_niveis(niveis)}, "
+          f"{texto_das_sementes(sementes)} ===")
+    print(f"Máquina: {nome_do_sistema()}, {nome_do_processador()}, Python {platform.python_version()}")
+    print(f"São {len(previstas)} partidas completas, da mais rápida para a mais demorada.")
+    print("Tempo aproximado: até o nível 8, uns 2 minutos por semente e mais uns 10 minutos das partidas do Minimax;")
+    print("com o nível 10, mais uns 15 minutos por semente; com o nível 12, mais umas 2 horas por semente.")
+    print("Ctrl+C interrompe a partida em andamento: dá para pular só ela ou finalizar com as que já terminaram.\n")
+    inicio = datetime.now()
+
+    def salvar_parcial(terminadas):
+        """Deixa o texto do que já terminou no arquivo, para nada se perder se o computador desligar no meio."""
+        try:
+            blocos = montar_resultado_partidas(terminadas, len(previstas), niveis, sementes, inicio, datetime.now())
+            with open(ARQUIVO_PARTIDAS, "w", encoding="utf-8-sig") as saida:
+                saida.write(para_texto(blocos) + "\n")
+        except OSError:
+            pass
+
+    partidas = rodar_partidas(previstas, salvar_parcial)
+    if not partidas:
+        print("\nNenhuma partida terminou: nada foi salvo.")
+        return
+    blocos = montar_resultado_partidas(partidas, len(previstas), niveis, sementes, inicio, datetime.now())
+    gravar_resultado(blocos, ARQUIVO_PARTIDAS, ARQUIVO_PARTIDAS_CSV)
 
 
 if __name__ == "__main__":
-    main()
+    if "--partidas" in sys.argv:
+        main_partidas()
+    elif "--teste" in sys.argv:
+        argumentos = sys.argv[sys.argv.index("--teste") + 1:]
+        if len(argumentos) < 2:
+            print("Uso: python diario_testes.py --teste <minimax|alfabeta> <nível> [início|meio|final|todas]")
+            sys.exit(1)
+        teste_avulso(*argumentos[:3])
+    else:
+        main()
